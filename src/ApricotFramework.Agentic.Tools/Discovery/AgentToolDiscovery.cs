@@ -1,0 +1,75 @@
+using System.Reflection;
+
+namespace ApricotFramework.Agentic.Tools.Discovery;
+
+/// <summary>
+/// Finds tools by looking for them.
+/// </summary>
+/// <remarks>
+/// <para>
+/// A tool is discovered because it derives from <see cref="AgentTool"/>, not because it carries a
+/// marker attribute. Deriving is already the declaration, and a second thing to remember would be
+/// a second thing to forget - with the failure being a tool that silently is not there.
+/// </para>
+/// <para>
+/// The risk that runs the other way - something swept up that should not have been - is mostly
+/// caught downstream: a type picked up by accident still has to satisfy the validators, and one
+/// that was never meant to be offered rarely declares a description or an authorization. Where that
+/// is not enough, <see cref="AgentToolIgnoreAttribute"/> and the predicate are.
+/// </para>
+/// <para>
+/// Worth saying plainly: a curated surface beats a discovered one. An oversized tool surface makes
+/// a model worse at choosing between what is on it, and scanning is how a surface grows without
+/// anyone deciding that it should. These helpers exist for the host with forty tools and a
+/// convention, not as the recommended way to register three.
+/// </para>
+/// </remarks>
+public static class AgentToolDiscovery
+{
+    /// <summary>
+    /// Finds the tool types in an assembly.
+    /// </summary>
+    /// <param name="assembly">The assembly to look in.</param>
+    /// <param name="predicate">A further test each candidate has to pass, or null for none.</param>
+    /// <returns>The tool types found, in no particular order.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="assembly"/> is null.</exception>
+    /// <remarks>
+    /// Includes types that are not public, since a host may reasonably keep its tools internal.
+    /// Excludes anything that cannot be instantiated as one tool: an abstract base, an open
+    /// generic, or a type carrying <see cref="AgentToolIgnoreAttribute"/>.
+    /// </remarks>
+    public static IEnumerable<Type> FromAssembly(Assembly assembly, Func<Type, bool>? predicate = null)
+    {
+        ArgumentNullException.ThrowIfNull(assembly);
+
+        return assembly.GetTypes().Where(type => IsTool(type) && (predicate?.Invoke(type) ?? true));
+    }
+
+    /// <summary>
+    /// Finds the tool types in several assemblies.
+    /// </summary>
+    /// <param name="assemblies">The assemblies to look in.</param>
+    /// <param name="predicate">A further test each candidate has to pass, or null for none.</param>
+    /// <returns>The tool types found, each once, in no particular order.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="assemblies"/> is null.</exception>
+    public static IEnumerable<Type> FromAssemblies(IEnumerable<Assembly> assemblies, Func<Type, bool>? predicate = null)
+    {
+        ArgumentNullException.ThrowIfNull(assemblies);
+
+        return assemblies.SelectMany(assembly => FromAssembly(assembly, predicate)).Distinct();
+    }
+
+    /// <summary>
+    /// Checks whether a type is a tool that can be instantiated as one.
+    /// </summary>
+    /// <param name="type">The type to check.</param>
+    /// <returns>True where the type is a discoverable tool.</returns>
+    public static bool IsTool(Type type)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+
+        return type is { IsClass: true, IsAbstract: false, IsGenericTypeDefinition: false }
+               && typeof(AgentTool).IsAssignableFrom(type)
+               && type.GetCustomAttribute<AgentToolIgnoreAttribute>(inherit: false) is null;
+    }
+}

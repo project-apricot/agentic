@@ -1,0 +1,240 @@
+---
+title: Hosting
+description: Registration, validation at startup, and reaching tools from a surface.
+---
+
+# Hosting
+
+```csharp
+builder.Services.AddAgentTools();                                 // registry, invoker, authorizer
+builder.Services.AddAgentTool<AuthorsGetTool>();
+builder.Services.AddAgentTool<AuthorsListTool>();
+builder.Services.AddAgentToolValidator<ToolNamingConvention>();
+```
+
+A tool is registered against `AgentTool` rather than its own type, so the registry receives every
+tool without being told each one twice. The authorizer is registered with `TryAdd`, so a host that
+already has one of its own keeps it.
+
+## Scanning
+
+For a host with enough tools that listing them becomes its own maintenance problem:
+
+```csharp
+builder.Services.AddAgentToolsFromAssembly();                        // the calling assembly
+builder.Services.AddAgentToolsFromAssemblyContaining<AuthorsGetTool>();
+builder.Services.AddAgentToolsFromAssembly(assembly, type => type.Namespace!.StartsWith("Enlight.Content.AgentTools"));
+```
+
+A tool is found because it derives from `AgentTool`, not because it carries a marker attribute.
+Deriving is already the declaration, and a second thing to remember would be a second thing to
+forget — with the failure being a tool that silently is not there.
+
+Skipped: abstract bases, open generics, and anything carrying `[AgentToolIgnore]`. Internal types
+are **not** skipped, since a host may reasonably keep its tools internal.
+
+Two things to know before reaching for it.
+
+**A curated list is better where you can have one.** An oversized tool surface makes a model worse
+at choosing between what is on it, and scanning is how a surface grows without anyone deciding
+that it should. Naming three tools makes the list itself the surface, and somebody has to decide
+to add to it.
+
+**Scan narrowly.** An assembly that also holds tools written for a test is how a surface acquires
+tools nobody meant to offer. The predicate is there for that. The consolation is that most
+accidents fail loudly rather than quietly — a type swept up by mistake still has to satisfy the
+validators, and one never meant to be offered rarely declares a description or an authorization.
+
+None of the scanning helpers return an `IAgentToolBuilder`, because one builder cannot speak for
+however many tools were found. A requirement meant for a whole family goes on a shared base class
+instead — authorization attributes are read through the type chain, so it reaches every tool
+deriving from it:
+
+```csharp
+[AuthorizeAllScopes("enlight-content.agent")]
+public abstract class ContentAgentTool<TArgs, TResult> : AgentTool<TArgs, TResult>;
+```
+
+## What is enforced, and what is yours
+
+The registry checks two things for itself, and neither is an opinion: a tool has a name, and no
+two tools share one. Without either it cannot address them, so there is nothing to configure.
+
+Everything else is a registration, not a setting. There are no flags.
+
+**Who may reach a tool** is an `IAgentToolFilter`, and none are registered until you ask:
+
+```csharp
+builder.Services.AddAgentToolAuthorization();                    // the attributes a tool declares
+builder.Services.AddAgentToolFilter<SurfaceAgentToolFilter>();   // yours
+```
+
+`AddAgentToolAuthorization()` is separate from `AddAgentTools()` on purpose, and the same shape the
+MCP SDK settled on. A host with tools and no policies configured should get an answer rather than
+an unresolvable `IAuthorizationService`, and a host that wants no authorization should say so by
+not asking rather than by unpicking a registration.
+
+A filter denies with a reason, and a denied tool is **left out of the listing and refused on the
+call**. That is not two behaviours but one: a listing exists to avoid offering what the call would
+refuse, so a filter applying to only one of them would break the property it is for.
+
+What a filter deliberately cannot say is "listed, but not callable right now". A budget that has
+run out, a call awaiting approval, a rate limit — those are about the call rather than about what
+exists, and belong in an invoker wrapper. So does reshaping a listing: capping it, sorting it, or
+hiding something deprecated but still callable.
+
+**What a declaration ought to carry** is an `IAgentToolValidator`, and none are registered:
+
+```csharp
+builder.Services.AddAgentToolValidator<DescriptionDeclaredValidator>();
+builder.Services.AddAgentToolValidator<ConsistentBehaviourValidator>();
+builder.Services.AddAgentToolValidator<ToolNamingConvention>();      // yours
+```
+
+`TitleDeclaredValidator`, `DescriptionDeclaredValidator` and `ConsistentBehaviourValidator` ship
+and wait to be chosen. ASP.NET Core does not check that your controller has a summary either; it
+checks what it needs to function and leaves the rest to you.
+
+## The tripwire
+
+There is no setting to turn authorization on, and something better instead. If a tool carries
+authorization while nothing is enforcing it, the registry refuses to compose:
+
+```
+The tool 'content_authors_get' carries authorization, but nothing in this host enforces it.
+Call AddAgentToolAuthorization(), or register an AgentToolAuthorizationMarker beside whatever
+enforces it instead.
+```
+
+That last clause is for a host enforcing authorization its own way — a filter reading a table, a
+service this library has never heard of. Registering the marker beside it says so.
+
+A tool carrying no authorization at all is fine — a host with genuinely open tools is a legitimate
+configuration, and such a tool is [listed and callable](/docs/agentic/authorization). A host that
+wrote `[Authorize]` and did not wire it up is not. The MCP SDK makes the same call for the same
+reason.
+
+`[AllowAnonymous]` on a tool that also declares a gate keeps the wire quiet as well, because a gate
+the host waived on purpose is not one nothing is enforcing.
+
+## Where tools come from
+
+Tools registered with `AddAgentTool<T>()` are one source among several. Anything else — adapted
+from an `AIFunction`, built from configuration, read off a server the host speaks to — implements
+`IAgentToolSource` and is composed beside them, checked the same way:
+
+```csharp
+builder.Services.AddAgentToolSource<ForeignToolSource>();
+```
+
+It is asynchronous because some sources cannot be enumerated while the container is being built:
+a connection has to be made first, and `ConfigureServices` is not where a connection belongs.
+
+A source that can fail decides for itself what failure means. Tools you wrote should stop the host
+from starting. Tools from somewhere you do not control should be logged and left out — a service
+that will not start over a third party's mistake is worse than one running with fewer tools.
+
+`CuratingAgentToolSource` is how a source discharges that, since it cannot otherwise know what the
+registry's validators will refuse. A source hands over descriptors, so the same place is where it
+attaches whatever should gate its tools — nothing it fetches carries an attribute:
+
+```csharp
+builder.Services.AddAgentToolSource(provider => new CuratingAgentToolSource(
+    provider.GetRequiredService<ForeignToolSource>(),
+    AgentToolCuration.DropRejected(
+        provider.GetServices<IAgentToolValidator>(),
+        (tool, why) => provider.GetRequiredService<ILogger<ForeignToolSource>>().LogWarning(why, "Left out {Tool}", tool.Name))));
+```
+
+See [Tools from functions](./functions) for the rest, including why a name collision is the one
+thing no per-tool check can catch.
+
+## Invoking
+
+```csharp
+var context = new AgentToolContext
+{
+    User     = user,
+    Services = services,
+};
+
+await foreach (var chunk in invoker.InvokeAsync(name, argumentsJson, context, cancellationToken))
+{
+    await responseStream.WriteAsync(chunk);
+}
+```
+
+or, for a caller that cannot stream:
+
+```csharp
+var json = await invoker.InvokeCompleteAsync(name, argumentsJson, context, cancellationToken);
+```
+
+The context carries the caller, not the call. Which tool and what arguments are parameters,
+because a caller usually makes several calls and a listing makes none — an `AgentToolContext` with
+a tool name in it would have to answer what `GetAvailableToolsAsync` is supposed to put there.
+
+`InvokeCompleteAsync` collects a sequence tool's items into an array — which is what its output
+schema describes either way. A failure part way through fails the whole call and discards what
+arrived: handing a model a truncated result it cannot recognise as truncated is worse than
+handing it an error.
+
+## Wrapping the invoker
+
+A tool call is the natural place for the things a host wants around every tool call — a log line, a
+span, a rate limit, a record of what an agent did on somebody's behalf. `IAgentToolInvoker` is an
+interface so those can wrap it, and `DelegatingAgentToolInvoker` passes everything through so a
+wrapper says only what it changes:
+
+```csharp
+public sealed class AuditingInvoker(IAgentToolInvoker inner, IAudit audit)
+    : DelegatingAgentToolInvoker(inner)
+{
+    public override async Task<string> InvokeCompleteAsync(
+        string name, string? argumentsJson, AgentToolContext context, CancellationToken ct)
+    {
+        await audit.RecordAsync(context.User, name, ct);
+
+        return await base.InvokeCompleteAsync(name, argumentsJson, context, ct);
+    }
+}
+```
+
+```csharp
+builder.Services.DecorateAgentToolInvoker<AuditingInvoker>();
+```
+
+Wrappers apply in the order registered, each around the last, so the one registered last is the one
+a caller reaches first.
+
+Two things worth knowing:
+
+**The invoker is registered behind the interface only.** Resolving `AgentToolInvoker` by its
+concrete type will not work, deliberately — a host reaching past its own wrappers would have a
+rate limit or an audit log nobody reaches, which is worse than not having one.
+
+**Override both invocation methods, or neither.** `InvokeAsync` and `InvokeCompleteAsync` are
+separate calls rather than one expressed in terms of the other, so a wrapper overriding only the
+streaming one misses every caller that cannot stream. A rate limit on one of the two is a rate
+limit on neither.
+
+## Errors
+
+Failures are `AgentToolException` and its derivatives — `AgentToolNotFoundException`,
+`AgentToolArgumentException`, `AgentToolAccessDeniedException`, `AgentToolDeclarationException`.
+Deliberately not a host's error type: what a failed tool call should look like is an application's
+decision, and a library that picked one would be argued with by every host that wanted another.
+
+Map them at your surface. The distinction worth preserving is **refusal versus fault** — a refusal
+that reads as a fault invites a model to retry it, and an agent will accept the invitation.
+
+## Reaching them from a surface
+
+Nothing in the library opens a port. A host writes the transport once:
+
+- **MCP** — map the registry onto `tools/list`, and `InvokeCompleteAsync` onto `tools/call`. The
+  protocol returns one result per call, so a sequence tool is collected.
+- **In-process loop** — wrap a tool as a `Microsoft.Extensions.AI.AIFunction` and put it in
+  `ChatOptions.Tools`.
+- **Service to service** — one gRPC or HTTP endpoint taking a name and a JSON payload, since the
+  declaration already carries the schemas that describe both.

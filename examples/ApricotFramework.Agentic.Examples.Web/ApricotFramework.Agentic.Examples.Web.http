@@ -1,0 +1,209 @@
+@host = http://localhost:5187
+
+# Authentication is faked from headers, so there is no token issuer to run. Send a subject and a
+# space separated list of scopes; the tools name policies that require them.
+@reader    = X-Demo-Subject: ada
+@readScope = X-Demo-Scopes: tickets.read customers.read
+@writer    = X-Demo-Scopes: tickets.read tickets.write customers.read
+@admin     = X-Demo-Scopes: tickets.read tickets.write tickets.admin customers.read
+
+### What this caller can do. Filtered by the same authorizer that gates the call, so nothing
+### listed here will then refuse them.
+GET {{host}}/tools
+{{reader}}
+{{readScope}}
+
+### The same question with no credentials at all. Comes back empty rather than refused, because a
+### caller is never offered what they cannot invoke.
+GET {{host}}/tools
+
+### An admin sees more - including the destructive ones, which no reader is offered.
+GET {{host}}/tools
+{{reader}}
+{{admin}}
+
+### Narrowed to one surface. support_tickets_delete and support_tickets_purge declare themselves
+### internal only, so they disappear from the MCP surface even for an admin.
+GET {{host}}/tools?surface=mcp
+{{reader}}
+{{admin}}
+
+### And on the internal surface they are back.
+GET {{host}}/tools?surface=internal
+{{reader}}
+{{admin}}
+
+### One declaration in full, schemas included. Note how the descriptions, the optionality and the
+### enum's allowed values all come from the argument record.
+GET {{host}}/tools/support_tickets_search
+{{reader}}
+{{readScope}}
+
+### A tool that takes nothing.
+POST {{host}}/tools/support_tickets_list
+{{reader}}
+{{readScope}}
+
+### The same tool streamed, one JSON object per line. What a sequence tool is for.
+POST {{host}}/tools/support_tickets_list/stream
+{{reader}}
+{{readScope}}
+
+### Arguments go in the body, shaped by the input schema.
+POST {{host}}/tools/support_tickets_search
+Content-Type: application/json
+{{reader}}
+{{readScope}}
+
+{ "query": "invoice", "status": "Pending", "limit": 5 }
+
+### Reading one ticket in full.
+POST {{host}}/tools/support_tickets_get
+Content-Type: application/json
+{{reader}}
+{{readScope}}
+
+{ "id": 1 }
+
+### Arguments the schema rejects. Reported as something to correct rather than as a fault, so a
+### model fixes them instead of retrying unchanged.
+POST {{host}}/tools/support_tickets_search
+Content-Type: application/json
+{{reader}}
+{{readScope}}
+
+{ "limit": 500 }
+
+### A write, refused: this caller holds tickets.read but not tickets.write.
+POST {{host}}/tools/support_tickets_create
+Content-Type: application/json
+{{reader}}
+{{readScope}}
+
+{ "subject": "Cannot export", "body": "The CSV is empty.", "customerId": 1 }
+
+### The same write, allowed.
+POST {{host}}/tools/support_tickets_create
+Content-Type: application/json
+{{reader}}
+{{writer}}
+
+{ "subject": "Cannot export", "body": "The CSV is empty.", "customerId": 1 }
+
+### A note. Not idempotent - calling it twice adds two notes, which is why the tool says so.
+POST {{host}}/tools/support_notes_add
+Content-Type: application/json
+{{reader}}
+{{writer}}
+
+{ "ticketId": 1, "note": "Checked the mail relay logs." }
+
+### Closing a ticket keeps it readable. Idempotent, so a retry is free.
+POST {{host}}/tools/support_tickets_close
+Content-Type: application/json
+{{reader}}
+{{writer}}
+
+{ "id": 2, "resolution": "Refunded the duplicate charge." }
+
+### A destructive tool on the surface it is declared for. Needs tickets.admin.
+POST {{host}}/tools/support_tickets_delete?surface=internal
+Content-Type: application/json
+{{reader}}
+{{admin}}
+
+{ "id": 3 }
+
+### The same call on the MCP surface. Reported as absent rather than refused, because from that
+### surface it never existed - telling a model a tool exists but is barred invites it to keep asking.
+POST {{host}}/tools/support_tickets_delete?surface=mcp
+Content-Type: application/json
+{{reader}}
+{{admin}}
+
+{ "id": 1 }
+
+### A bulk destructive tool with a floor on what it will touch.
+POST {{host}}/tools/support_tickets_purge?surface=internal
+Content-Type: application/json
+{{reader}}
+{{admin}}
+
+{ "olderThanDays": 60 }
+
+### Below the floor, refused as an argument to correct.
+POST {{host}}/tools/support_tickets_purge?surface=internal
+Content-Type: application/json
+{{reader}}
+{{admin}}
+
+{ "olderThanDays": 1 }
+
+### Personal data. Labelled sensitivity=personal, which a policy could read without knowing what a
+### customer is.
+POST {{host}}/tools/support_customers_get
+Content-Type: application/json
+{{reader}}
+{{readScope}}
+
+{ "id": 1 }
+
+### Open world: reaches a registry this application does not own, so it can fail for reasons no
+### correct argument will fix.
+POST {{host}}/tools/support_registry_lookup
+Content-Type: application/json
+{{reader}}
+{{readScope}}
+
+{ "companyName": "Northwind" }
+
+### Not in the registry.
+POST {{host}}/tools/support_registry_lookup
+Content-Type: application/json
+{{reader}}
+{{readScope}}
+
+{ "companyName": "Nowhere Ltd" }
+
+### Read only, open world and NOT idempotent - calling it twice changes nothing but does not give
+### the same answer twice, so a caller should not cache the first one.
+POST {{host}}/tools/support_status_check
+{{reader}}
+{{readScope}}
+
+### A tool with no class of its own: a delegate wrapped as an AIFunction, gated with
+### RequireAuthorization at registration because there was no type to hang an attribute on.
+POST {{host}}/tools/support_text_summarise
+Content-Type: application/json
+{{reader}}
+{{readScope}}
+
+{ "text": "The customer reports that the CSV export hangs at eighty percent and never completes." }
+
+### A tool from a source this application does not control, renamed into a space of its own so a
+### foreign "search" cannot shadow ours.
+POST {{host}}/tools/support_kb_search
+Content-Type: application/json
+{{reader}}
+{{readScope}}
+
+{ "query": "password reset" }
+
+### The third knowledge base tool describes itself with whitespace, so curation left it out rather
+### than letting one bad foreign declaration stop the host. Watch the log for the warning.
+POST {{host}}/tools/support_kb_retire
+Content-Type: application/json
+{{reader}}
+{{admin}}
+
+{ "id": "kb-1" }
+
+### Deliberately not offered: marked [AgentToolIgnore], so assembly scanning passes over it.
+POST {{host}}/tools/support_tickets_export
+{{reader}}
+{{admin}}
+
+### A name nothing is declared under.
+POST {{host}}/tools/support_tickets_obliterate
+{{reader}}
+{{admin}}

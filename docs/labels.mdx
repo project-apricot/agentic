@@ -1,0 +1,97 @@
+---
+title: Labels
+description: Host-defined markers on a tool, for policies this library has no opinion about.
+---
+
+# Labels
+
+A tool carries the things every tool has — a name, a prompt, schemas, whether it changes anything.
+What it does *not* carry is whatever your organisation happens to care about: how sensitive the
+data is, which tier of caller may reach it, whether it has been reviewed.
+
+Those are labels. The mechanism is here; the vocabulary is not.
+
+```csharp
+[AgentToolLabel("sensitivity", Sensitivity.Personal)]
+[AuthorizeAnyAccess(ContentAccesses.AuthorsRead)]
+public class AuthorsGetTool : AgentTool<AuthorGetArguments, AuthorDetail>
+```
+
+`Sensitivity` is yours. Nothing in the library knows it exists, and nothing has to change here
+when you add a second label next year.
+
+## Reading them
+
+```csharp
+if (tool.TryGetLabel<Sensitivity>("sensitivity", out var sensitivity)) { … }
+if (tool.HasLabel("experimental")) { … }
+```
+
+Asking for the wrong type reports absence rather than throwing, so a policy that does not
+recognise a value fails closed instead of falling over.
+
+## Where they earn their keep
+
+**In an authorization handler.** The authorizer passes the tool as the authorization *resource*,
+so a handler sees it without anything in between:
+
+```csharp
+protected override Task HandleRequirementAsync(AuthorizationHandlerContext context, AgentAccessRequirement requirement)
+{
+    if (context.Resource is AgentTool tool &&
+        tool.TryGetLabel<Sensitivity>("sensitivity", out var level) &&
+        level == Sensitivity.Personal &&
+        !context.User.HasClaim("scope", "personal-data"))
+    {
+        return Task.CompletedTask;   // abstain, and the requirement goes unmet
+    }
+
+    context.Succeed(requirement);
+
+    return Task.CompletedTask;
+}
+```
+
+**In a validator**, to make the vocabulary closed and the omission a startup failure:
+
+```csharp
+public class SensitivityDeclared : IAgentToolValidator
+{
+    public void Validate(AgentTool tool)
+    {
+        if (!tool.TryGetLabel<Sensitivity>("sensitivity", out _))
+        {
+            throw new AgentToolDeclarationException($"'{tool.Name}' declares no sensitivity.");
+        }
+    }
+}
+```
+
+That pairing is the point. An open vocabulary would decay — one service labelling `"pii"` where
+another labels `"personal"`, matching neither policy and erroring nowhere. A validator is where
+you close it, and closing it at startup names the tool to whoever is adding it.
+
+## Inheritance
+
+Applied to a base class, a label covers a family of tools. A derived tool restating the same name
+overrides it rather than adding a second:
+
+```csharp
+[AgentToolLabel("sensitivity", Sensitivity.Public)]
+public abstract class PublishedContentTool<TArgs, TResult> : AgentTool<TArgs, TResult>;
+
+[AgentToolLabel("sensitivity", Sensitivity.Personal)]     // wins for this tool only
+public class PublishedAuthorsGetTool : PublishedContentTool<…, …>;
+```
+
+## Tools built at run time
+
+`Labels` is virtual, so a tool adapted from a function — or from a foreign server — carries labels
+it was handed rather than ones it declared. The reading side cannot tell the difference, which is
+what lets a policy apply to both.
+
+## A caution
+
+Labels are declared by whoever writes the tool. A tool mislabelling itself walks past a policy
+that trusts the label. That is the same trust already placed in a tool to implement its own
+operation correctly — but it makes these fields security-relevant, and worth reviewing as such.

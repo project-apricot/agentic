@@ -1,0 +1,185 @@
+---
+title: Authorization
+description: A tool is gated by the attribute that would gate an endpoint, decided by the host's own pipeline.
+---
+
+# Authorization
+
+This library does not know what a permission is. Authorization is one `IAgentToolFilter` among
+however many a host registers:
+
+```csharp
+public interface IAgentToolFilter
+{
+    ValueTask<AgentToolFilterDecision> EvaluateAsync(
+        AgentToolDescriptor tool, AgentToolContext context, CancellationToken cancellationToken = default);
+}
+```
+
+One decision covers both halves. A tool the filter denies is left out of a listing and refused on
+the call, so a caller is never offered something that then refuses them.
+
+## The attribute implementation
+
+`ApricotFramework.Agentic.Tools.AspNetCore` implements it by reading the authorization a tool's
+registration carries — which begins with the attributes on the tool's own type:
+
+```csharp
+[AuthorizeAnyAccess(ContentAccesses.AuthorsRead)]
+public class AuthorsGetTool : AgentTool<AuthorGetArguments, AuthorDetail>
+```
+
+That is the same attribute that would sit on a controller action. It produces the same
+requirements, and those requirements reach the same handlers over the same stores — so a tool and
+the endpoint beside it cannot drift into deciding the same caller differently.
+
+Enable it with one call:
+
+```csharp
+builder.Services.AddAgentTools();
+builder.Services.AddAgentToolAuthorization();
+```
+
+Three shapes are read, all of them ASP.NET Core's own, and all of them combined rather than one
+winning:
+
+| Metadata | Written as | Resolved by |
+| --- | --- | --- |
+| `IAuthorizeData` | `[Authorize]`, `[Authorize(Policy = …)]`, `[Authorize(Roles = …)]` | the host's `IAuthorizationPolicyProvider` |
+| `IAuthorizationRequirementData` | an attribute carrying its own requirements | the attribute itself |
+| `AuthorizationPolicy` | an object in the metadata, from `RequireAuthorization` or a source | taken as it is |
+
+A permission attribute, a scope attribute, a policy attribute or one nobody has written yet all
+work, and none of them reach this library. `AuthenticationSchemes` is ignored: acting on it means
+challenging a caller to authenticate again, and an invocation has no request to challenge.
+
+Attributes are read from the tool's type **and everything it derives from**, so a family of tools
+sharing a requirement declares it once on a base class.
+
+## Registrations carry it too
+
+An attribute is only one way to say it. Anything a registration carries counts the same, which is
+what lets a tool nobody wrote an attribute for — one adapted from an `AIFunction`, one fetched from
+a foreign server — be gated at all:
+
+```csharp
+builder.Services.AddAgentTool(searchFunction)
+                .RequireAuthorization("tools.search");
+```
+
+The overloads mirror minimal APIs: no argument for an authenticated caller, policy names, an
+`IAuthorizeData`, requirements, a built `AuthorizationPolicy`, or a builder callback. Each one
+**adds**, so `RequireAuthorization` on a type that already carries an attribute means both.
+
+## A tool that declares nothing is open
+
+Nothing is refused for having said nothing. That is what the MCP SDK does with a tool carrying no
+authorization metadata, and it is the only answer that lets a public tool sit beside gated ones.
+
+`AuthorizationOptions.FallbackPolicy` is deliberately **not** consulted. It governs endpoints; the
+transport endpoint carrying these calls has already been through it, and applying it a second time
+per tool would gate a tool on a policy written for a route. A host that wants every tool gated says
+so on the tools — or registers a filter of its own, which is what filters are for.
+
+`[AllowAnonymous]` waives whatever else the registration declares, so it beside `[Authorize]` opens
+the tool. ASP.NET Core's semantics, footgun included. It also keeps [the tripwire](/docs/agentic/hosting)
+quiet, because a gate the host waived on purpose is not a gate nothing is enforcing.
+
+## No caller is not a refusal
+
+A context with no `User` is handed an unauthenticated `ClaimsPrincipal` and the requirements
+decide. Anything reached through `[Authorize]` denies it — that attribute carries the
+deny-anonymous requirement whether or not it names a policy — while a host's own requirement is
+left free to permit a call made by nobody, which is how a worker or a scheduler gets to run a tool.
+
+## The listing and the gate
+
+One filter answers both questions, and that is the point rather than a convenience.
+
+```csharp
+var offered = await invoker.GetAvailableToolsAsync(context, cancellationToken);      // what could they call
+await invoker.InvokeCompleteAsync(name, argumentsJson, context, cancellationToken);  // let them call it
+```
+
+`GetAvailableToolsAsync` filters with the same filters `InvokeAsync` enforces, so a caller is never
+shown a tool that then refuses them, nor refused one it was shown. A separate listing rule would be
+a second implementation of the same decision, and the two would drift.
+
+It lives on the invoker rather than the registry because the invoker is the one place holding both
+the tools and the decision. The registry has no notion of a caller, and keeping it that way is what
+stops the filtering from happening somewhere it cannot be kept honest.
+
+**The listing is ergonomics; the call is enforcement.** A filter whose answer moves — keyed on the
+time of day, a budget being spent — can disagree with itself between the two, and where it does,
+showing a tool that then refuses is the better failure: a false positive costs one refused call,
+where a tool silently missing is one nobody can diagnose. Enforcement on invocation is
+unconditional and there is no setting for it.
+
+That symmetry is also why the context carries only the caller. Which tool and what arguments are
+parameters, so the same context answers both questions without a listing having to supply a tool
+name it does not have.
+
+## The tool is the resource
+
+The tool is passed as the authorization resource, so a handler can narrow on it without this
+library knowing that is happening:
+
+```csharp
+protected override Task HandleRequirementAsync(AuthorizationHandlerContext context, McpSurfaceRequirement requirement)
+{
+    if (context.Resource is AgentTool { IsDestructive: true } && !context.User.IsInRole("operator"))
+    {
+        return Task.CompletedTask;      // no Succeed, so it is refused
+    }
+
+    context.Succeed(requirement);
+
+    return Task.CompletedTask;
+}
+```
+
+Which is how a second, agent-facing gate gets written: a policy keyed on what the tool declares
+about itself — destructive, read-only, whatever a [label](/docs/agentic/labels) adds — sitting
+beside the domain's own access check rather than mirroring it.
+
+## Surfaces are the host's own
+
+There is no framework notion of which surface a tool belongs to, and no property on the context
+carrying which one a call arrived on. Both halves are the application's: the tool side is a
+[label](/docs/agentic/labels), and the caller side is a context of your own.
+
+```csharp
+public sealed class SupportDeskAgentToolContext : AgentToolContext
+{
+    public string? Surface { get; init; }
+}
+
+public sealed class SurfaceAgentToolFilter : IAgentToolFilter
+{
+    public ValueTask<AgentToolFilterDecision> EvaluateAsync(
+        AgentToolDescriptor tool, AgentToolContext context, CancellationToken cancellationToken = default)
+    {
+        var surface = (context as SupportDeskAgentToolContext)?.Surface;
+
+        if (string.IsNullOrWhiteSpace(surface))
+        {
+            return ValueTask.FromResult(AgentToolFilterDecision.Allow());
+        }
+
+        var declared = tool.Tool.TryGetLabel<string>(SupportDeskLabels.Surfaces, out var value) ? value! : string.Empty;
+
+        return ValueTask.FromResult(
+            declared.Split(',', StringSplitOptions.TrimEntries).Contains(surface, StringComparer.Ordinal)
+                ? AgentToolFilterDecision.Allow()
+                : AgentToolFilterDecision.Deny($"The tool '{tool.Name}' is not offered on '{surface}'."));
+    }
+}
+```
+
+Reading it as `(context as …)?.Surface` keeps a filter working when a host passes a plain
+`AgentToolContext` — a test, a worker, another front end. `AgentToolContext` is not sealed for
+exactly this.
+
+Which surfaces exist, whether a tool naming none is everywhere or nowhere, and whether the
+vocabulary is closed are all decisions a library would have to guess at, and a guess produces a
+declaration the host works around. Pin the vocabulary with a validator if you want it closed.

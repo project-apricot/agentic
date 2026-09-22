@@ -1,0 +1,88 @@
+---
+title: Declaring tools
+description: What a tool carries, where its schemas come from, and when to stream.
+---
+
+# Declaring tools
+
+A tool derives from one of two bases, depending on how its result arrives.
+
+## A whole result
+
+```csharp
+public class AuthorsGetTool(AuthorService authors) : AgentTool<AuthorGetArguments, AuthorDetail>
+{
+    public override string Name => "content_authors_get";
+    public override string Title => "Get an author";
+    public override string Description => "Reads one author in full, given the author's identifier.";
+    public override bool IsReadOnly => true;
+    public override bool IsDestructive => false;
+
+    protected override async Task<AuthorDetail> ExecuteAsync(
+        AuthorGetArguments arguments, AgentToolContext context, CancellationToken cancellationToken)
+        => Map(await authors.GetById(arguments.Id));
+}
+```
+
+## A sequence
+
+```csharp
+public class AuthorsListTool(AuthorService authors) : AgentStreamTool<AgentToolNoArguments, AuthorSummary>
+{
+    // …
+
+    protected override async IAsyncEnumerable<AuthorSummary> ExecuteAsync(
+        AgentToolNoArguments arguments, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (var author in authors.Stream(cancellationToken))
+        {
+            yield return Map(author);
+        }
+    }
+}
+```
+
+Worth choosing when a caller can act on the first items before the last ones exist. A caller that
+cannot stream collects them and sees the same result, so the choice costs it nothing.
+
+Note that streaming at the tool boundary only helps if the source streams too. A tool whose
+repository materialises the whole list first is stream-shaped but not streaming.
+
+## Schemas
+
+Generated from the argument and result types, not written by hand.
+
+```csharp
+public sealed record AuthorSummary
+{
+    [Description("The identifier of the author, used to refer to them in other tools.")]
+    public required long Id { get; init; }
+
+    [Description("A one line description of who the author is, where they have one.")]
+    public string? Headline { get; init; }
+}
+```
+
+`[Description]` becomes what a model reads. Nullability becomes the difference between a required
+field and an optional one, which is why deriving a schema from a wire format that cannot express
+absence — protobuf, for one — tells a model every field is optional.
+
+`OutputSchema` always describes the **complete** result. For a sequence tool that is the array, not
+one of its items: the schema means the same thing for every tool, and no consumer has to
+reconstruct the outer shape.
+
+## Prompts are not documentation
+
+`Description` is what a model is shown and what it selects on, so it says *when to reach for this*
+rather than what the implementation does. The code comments around it are for whoever maintains
+the tool. They are different texts for different readers, and neither is a duplicate of the other.
+
+What determines whether an agent picks the right tool is rarely one description in isolation — it
+is how the descriptions **contrast** with each other. Two tools that both return people need
+descriptions written with the other in view.
+
+## Restraint
+
+An oversized tool surface makes a model worse at choosing between what is on it. A surface is
+worth growing by what an agent is demonstrably useful for, rather than by what happens to be
+implemented.

@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "ApricotFramework.Agentic.Examples.Web": {
+      "commandName": "Project",
+      "launchBrowser": false,
+      "applicationUrl": "http://localhost:5187",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      }
+    }
+  }
+}

@@ -1,0 +1,59 @@
+---
+title: Namespaces
+description: What lives at the root, and what is grouped away from it.
+---
+
+# Namespaces
+
+One rule: **the root namespace holds everything you touch to declare a tool or to type a
+dependency on one.** Anything else is grouped by what it does.
+
+```csharp
+using ApricotFramework.Agentic.Tools;
+```
+
+That one using is enough to write a tool — the base classes, `AgentToolContext`,
+`[AgentToolLabel]`, `[AgentToolIgnore]`, the label readers, and every abstraction a host would take
+a dependency on.
+
+## ApricotFramework.Agentic.Tools
+
+| | |
+| --- | --- |
+| *(root)* | `AgentTool`, `AgentTool<,>`, `AgentStreamTool<,>`, `AgentToolContext`, `AgentToolDescriptor`, `AgentToolProgress`, `AgentToolResultKind`, `AgentToolNoArguments`, the label and ignore attributes, `AgentToolLabels`, and the five interfaces |
+| `.Adapters` | `DelegatingAgentTool`, `FunctionAgentTool`, `RenamedAgentTool` — tools built from, or wrapped around, something else |
+| `.Discovery` | `AgentToolDiscovery` |
+| `.Exceptions` | `AgentToolException` and its four derivatives |
+| `.Filters` | `AgentToolFilterDecision` |
+| `.Invocation` | `AgentToolInvoker`, `DelegatingAgentToolInvoker` |
+| `.Options` | `AgentToolCreateOptions` |
+| `.Registry` | `AgentToolRegistry` |
+| `.Serialization` | `AgentToolJson`, `AgentToolArguments` |
+| `.Sources` | `StaticAgentToolSource`, `CuratingAgentToolSource`, `AgentToolCuration` |
+| `.Validators` | `TitleDeclaredValidator`, `DescriptionDeclaredValidator`, `ConsistentBehaviourValidator` — none registered by default |
+
+## ApricotFramework.Agentic.Tools.AspNetCore
+
+| | |
+| --- | --- |
+| *(root)* | `IAgentToolBuilder` |
+| `.Authorization` | `AgentToolAuthorizationMetadata`, `AgentToolAuthorizationPolicy`, `AuthorizationAgentToolFilter`, `AgentToolAuthorizationMarker` |
+| `.Builders` | `AgentToolRegistration` — what `AddAgentTool` records, and the `IAgentToolBuilder` it hands back |
+| `.Extensions` | The registration and builder extension methods, `RequireAuthorization` among them |
+| `.Validators` | `AuthorizationEnforcedValidator` — the tripwire, and the one thing registered for you |
+
+## Tests follow the same rule
+
+Test folders map to namespaces too, with shared fixtures at the test root and everything else
+under the folder it belongs to. There is no reason for a test project to be organised differently
+from the code it tests, and one rule for the repository is easier to hold than two.
+
+## Two deliberate placements
+
+**The attributes stayed at the root**, alongside `AgentToolLabels`. Both are things a tool author
+writes or calls, and extension methods behind a folder namespace cannot be found by someone who
+does not already know where to look.
+
+**Interfaces stayed at the root even where their implementations moved.** `IAgentToolSource` sits
+beside `AgentTool` while `StaticAgentToolSource` is under `.Sources`, because typing a dependency
+is a more common act than constructing one, and the abstraction is what a host names.

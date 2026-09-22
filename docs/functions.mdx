@@ -1,0 +1,131 @@
+---
+title: Tools from functions
+description: Adapting an AIFunction — including a foreign MCP server's tools — into a tool.
+---
+
+# Tools from functions
+
+Not every tool is a class somebody wrote. A delegate, something assembled from configuration, or a
+tool read off a server the host merely speaks to — all of these are
+`Microsoft.Extensions.AI.AIFunction`, and `AgentTool.Create` adapts any of them.
+
+```csharp
+var tool = AgentTool.Create(function, new AgentToolCreateOptions
+{
+    IsReadOnly    = true,
+    IsDestructive = false,
+});
+```
+
+The function supplies its name, its prose and its schemas. The options supply what it cannot know:
+whether calling it changes anything. Both are `required` for the same reason they are abstract on
+`AgentTool` — a default would be the one nobody notices inheriting, and a policy keyed on
+"destructive" is worth nothing if a tool can arrive without having said.
+
+`Name`, `Title`, `Description`, `OutputSchema`, `Labels` and `SerializerOptions` are all
+overridable; anything left unset comes from the function.
+
+## Foreign MCP servers
+
+This is the case the adapter mostly exists for. An MCP client's tool **is** an `AIFunction`, so a
+third party's tools reach this model through the same path as everything else:
+
+```csharp
+foreach (var remote in await mcpClient.ListToolsAsync(cancellationToken))
+{
+    var annotations = remote.ProtocolTool.Annotations;
+
+    services.AddAgentTool(remote, new AgentToolCreateOptions
+    {
+        Name          = $"weather_{remote.Name}",          // yours, not theirs
+        Description   = descriptions[remote.Name],         // pinned, see below
+        IsReadOnly    = annotations?.ReadOnlyHint ?? false,
+        IsDestructive = annotations?.DestructiveHint ?? true,
+        Labels        = new Dictionary<string, object?> { ["origin"] = "weather-co" },
+    }).RequireAuthorization("tools.external");
+}
+```
+
+Four things worth doing deliberately, none of which the library can do for you:
+
+**Rename.** A foreign `search` will collide with, or shadow, something of yours. The registry
+rejects a duplicate name, which is the right failure — but prefixing avoids reaching it.
+
+**Pin the description.** A foreign tool's name, description and schema go straight into your
+model's prompt, and the server can change all three after you vetted them. That is a
+prompt-injection surface with no local equivalent. Overriding `Description` with text you control
+is the cheap mitigation; an allowlist of tool names is the other half.
+
+**Assume the worst about the hints.** `DestructiveHint` is optional and advisory. Defaulting a
+missing one to `true` costs you a stricter gate; defaulting it to `false` costs you a deletion.
+
+**Gate it yourself.** A foreign tool carries no authorization attribute, so `RequireAuthorization`
+is the only thing standing between your callers and it.
+
+## When a foreign declaration would not pass
+
+Adapting through `AgentTool.Create` heads most of this off, because `AgentToolCreateOptions`
+*makes* you supply what it cannot know: whether calling it destroys anything, and whether it only
+reads. But a server can still hand you prose that is empty, or a name that
+collides with another server's, and by default one such tool takes the whole registry with it —
+the registry refuses a declaration it cannot accept, which is right for tools you wrote and wrong
+for tools you merely reached.
+
+Wrap the source and look its tools over first:
+
+```csharp
+var foreign = new CuratingAgentToolSource(
+    new CuratingAgentToolSource(mcpSource, AgentToolCuration.Prefixing("weather_")),
+    AgentToolCuration.DropRejected(validators, (tool, why) => logger.LogWarning(why, "Left out {Tool}", tool.Name)));
+```
+
+The curator sees each tool and returns it, a wrapper to offer it differently, or null to leave it
+out. Those two answers cover different failures:
+
+| Curator | For |
+| --- | --- |
+| `AgentToolCuration.DropRejected(validators, onRejected)` | One malformed declaration costing you that tool rather than all of them |
+| `AgentToolCuration.Prefixing("weather_")` | Names chosen without knowing what they would sit beside |
+| `AgentToolCuration.Where(predicate)` | An allowlist — a server can add a tool after you reviewed what it offers |
+
+**Report what you drop.** A tool silently absent is the failure nobody can diagnose, and dropping
+turns a loud failure into a quiet one on purpose. The `onRejected` callback carries the tool and
+the reason.
+
+**A collision is the one thing no per-tool check can find**, because it is only visible once both
+tools are in front of the registry. `Prefixing` avoids it rather than detecting it; the registry
+still refuses an ambiguous name rather than picking one, which is the right failure for something
+genuinely undecidable.
+
+## Fixing rather than dropping
+
+`DelegatingAgentTool` passes everything through so a wrapper says only what it changes — which is
+how a host takes responsibility for a declaration it inherited:
+
+```csharp
+private sealed class Reviewed(AgentTool inner) : DelegatingAgentTool(inner)
+{
+    public override string Description => "Searches a third party weather index.";   // prose you wrote
+    public override bool IsDestructive => true;                                      // assume the worst
+}
+```
+
+`RenamedAgentTool` is the ready-made one for the case that comes up most, and changes the name
+only — `Title` is a label a person reads and stays whatever the tool called itself.
+
+## Labels and the context
+
+A constructed tool carries labels it was handed rather than ones it declared, and the reading side
+cannot tell the difference — so a policy written against `sensitivity` applies to both kinds.
+
+A function that needs more than its arguments finds the whole invocation in its own context bag:
+
+```csharp
+var context = arguments.Context?[typeof(AgentToolContext)] as AgentToolContext;
+```
+
+## What it cannot do
+
+A function returns one value, so a constructed tool is always
+`AgentToolResultKind.Whole`. Streaming needs `AgentStreamTool<TArguments, TItem>`, which means a
+class.
