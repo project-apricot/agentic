@@ -19,7 +19,7 @@ public class AgentToolAvailabilityTests
     public async Task GetAvailableToolsAsync_UnrestrictedAuthorizer_OffersEverything()
     {
         var tools = await Invoker([Probe("probe_items_one"), Probe("probe_items_two")])
-            .GetAvailableToolsAsync(new AgentToolContext(), TestContext.Current.CancellationToken);
+            .GetAvailableToolsAsync(Probes.Context(), TestContext.Current.CancellationToken);
 
         Assert.Equal(2, tools.Count);
     }
@@ -29,7 +29,7 @@ public class AgentToolAvailabilityTests
     {
         var invoker = Invoker([Probe("probe_items_one"), Probe("probe_items_two")], new AllowOnly("probe_items_one"));
 
-        var tools = await invoker.GetAvailableToolsAsync(new AgentToolContext(), TestContext.Current.CancellationToken);
+        var tools = await invoker.GetAvailableToolsAsync(Probes.Context(), TestContext.Current.CancellationToken);
 
         Assert.Equal("probe_items_one", Assert.Single(tools).Name);
     }
@@ -42,7 +42,7 @@ public class AgentToolAvailabilityTests
         var all = new[] { Probe("probe_items_one"), Probe("probe_items_two"), Probe("probe_items_three") };
         var invoker = Invoker(all, new AllowOnly("probe_items_two"));
 
-        var offered = await invoker.GetAvailableToolsAsync(new AgentToolContext(), TestContext.Current.CancellationToken);
+        var offered = await invoker.GetAvailableToolsAsync(Probes.Context(), TestContext.Current.CancellationToken);
 
         foreach (var tool in all)
         {
@@ -50,7 +50,7 @@ public class AgentToolAvailabilityTests
 
             try
             {
-                await invoker.InvokeCompleteAsync(tool.Name, null, new AgentToolContext(), TestContext.Current.CancellationToken);
+                await invoker.InvokeCompleteAsync(tool.Name, null, Probes.Context(), TestContext.Current.CancellationToken);
             }
             catch (AgentToolAccessDeniedException)
             {
@@ -70,7 +70,7 @@ public class AgentToolAvailabilityTests
     {
         await Assert.ThrowsAsync<AgentToolNotFoundException>(
             () => Invoker([Probe("probe_items_one")]).InvokeCompleteAsync(
-                string.Empty, null, new AgentToolContext(), TestContext.Current.CancellationToken));
+                string.Empty, null, Probes.Context(), TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -80,7 +80,7 @@ public class AgentToolAvailabilityTests
         // nobody able to say which filter removed it, is the failure nobody can diagnose
         var exception = await Assert.ThrowsAsync<AgentToolAccessDeniedException>(
             () => Invoker([Probe("probe_items_two")], new AllowOnly("probe_items_one"))
-                .InvokeCompleteAsync("probe_items_two", null, new AgentToolContext(), TestContext.Current.CancellationToken));
+                .InvokeCompleteAsync("probe_items_two", null, Probes.Context(), TestContext.Current.CancellationToken));
 
         Assert.Contains("not on the list", exception.Message, StringComparison.Ordinal);
     }
@@ -94,7 +94,7 @@ public class AgentToolAvailabilityTests
             new DenyEverything("the second filter said no"));
 
         var exception = await Assert.ThrowsAsync<AgentToolAccessDeniedException>(
-            () => invoker.InvokeCompleteAsync("probe_items_one", null, new AgentToolContext(), TestContext.Current.CancellationToken));
+            () => invoker.InvokeCompleteAsync("probe_items_one", null, Probes.Context(), TestContext.Current.CancellationToken));
 
         Assert.Equal("the second filter said no", exception.Message);
     }
@@ -105,7 +105,7 @@ public class AgentToolAvailabilityTests
         // a host saying there is nothing to decide. true of a command line tool, false of almost
         // everything else - which is why the ASP.NET Core package registers one for you
         Assert.Equal(2, (await Invoker([Probe("probe_items_one"), Probe("probe_items_two")])
-            .GetAvailableToolsAsync(new AgentToolContext(), TestContext.Current.CancellationToken)).Count);
+            .GetAvailableToolsAsync(Probes.Context(), TestContext.Current.CancellationToken)).Count);
     }
 
     /// <summary>A filter that refuses everything, to show ordering.</summary>

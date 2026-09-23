@@ -15,7 +15,7 @@ public sealed class TitleDeclaredValidator : IAgentToolValidator
     {
         ArgumentNullException.ThrowIfNull(tool);
 
-        if (string.IsNullOrWhiteSpace(tool.Tool.Title))
+        if (string.IsNullOrWhiteSpace(tool.Declaration.Title))
         {
             throw new AgentToolDeclarationException($"The tool '{tool.Name}' declares no title.");
         }

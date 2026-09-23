@@ -84,7 +84,9 @@ public sealed class AuthorizationAgentToolFilter : IAgentToolFilter
 
         var user = context.User ?? new ClaimsPrincipal(new ClaimsIdentity());
 
-        var result = await this.authorizationService.AuthorizeAsync(user, tool.Tool, requirements).ConfigureAwait(false);
+        // the descriptor as the resource, so a handler can narrow on what the tool declares -
+        // that it is destructive, that it carries a label - and on what the host said about it
+        var result = await this.authorizationService.AuthorizeAsync(user, tool, requirements).ConfigureAwait(false);
 
         return result.Succeeded
             ? AgentToolFilterDecision.Allow()

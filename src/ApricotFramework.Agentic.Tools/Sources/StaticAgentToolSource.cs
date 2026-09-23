@@ -1,12 +1,11 @@
 namespace ApricotFramework.Agentic.Tools.Sources;
 
 /// <summary>
-/// The tools a host registered in code.
+/// A source over a list that does not change.
 /// </summary>
 /// <remarks>
-/// What a container hands over, wrapped so it looks like every other source. Nothing here can
-/// fail at run time, which is the point of separating it: a host can tell the difference between
-/// the tools it wrote and the tools it merely reached.
+/// The same tools for every caller, which is what most hosts have. Ignores the context because
+/// there is nothing about a caller that could change the answer.
 /// </remarks>
 public sealed class StaticAgentToolSource : IAgentToolSource
 {
@@ -35,8 +34,8 @@ public sealed class StaticAgentToolSource : IAgentToolSource
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="tools"/> is null.</exception>
     /// <remarks>
     /// For a host with no metadata to attach - a test, or a loop running as itself. Anything
-    /// reading metadata will find none, which for the authorization filter means refusing.
-    /// A factory rather than a second constructor, because an empty collection would otherwise be
+    /// reading metadata will find none, which for the authorization filter means refusing. A
+    /// factory rather than a second constructor, because an empty collection would otherwise be
     /// ambiguous between the two.
     /// </remarks>
     public static StaticAgentToolSource For(params AgentTool[] tools)
@@ -47,8 +46,6 @@ public sealed class StaticAgentToolSource : IAgentToolSource
     }
 
     /// <inheritdoc />
-    public ValueTask<IReadOnlyList<AgentToolDescriptor>> GetToolsAsync(CancellationToken cancellationToken = default)
-    {
-        return ValueTask.FromResult(this.tools);
-    }
+    public ValueTask<IReadOnlyList<AgentToolDescriptor>> GetToolsAsync(IAgentToolSourceContext context, CancellationToken cancellationToken = default) =>
+        ValueTask.FromResult(this.tools);
 }

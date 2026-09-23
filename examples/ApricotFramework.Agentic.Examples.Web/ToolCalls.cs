@@ -12,27 +12,6 @@ namespace ApricotFramework.Agentic.Examples.Web;
 public static class ToolCalls
 {
     /// <summary>
-    /// Builds the context describing who is asking.
-    /// </summary>
-    /// <param name="http">The request.</param>
-    /// <param name="surface">The surface the caller claims to be on, or null for none.</param>
-    /// <returns>The context.</returns>
-    /// <remarks>
-    /// The caller, not the call - which tool and what arguments are parameters. A loop putting
-    /// several questions to an agent on one person's behalf would build this once.
-    /// </remarks>
-    /// <remarks>
-    /// A <see cref="SupportDeskAgentToolContext"/> rather than the base type, because the surface
-    /// is this application's own idea and the library carries nothing for it.
-    /// </remarks>
-    public static AgentToolContext Caller(HttpContext http, string? surface) => new SupportDeskAgentToolContext
-    {
-        User = http.User.Identity?.IsAuthenticated == true ? http.User : null,
-        Services = http.RequestServices,
-        Surface = surface
-    };
-
-    /// <summary>
     /// Reads the request body as the tool's arguments.
     /// </summary>
     /// <param name="http">The request.</param>
@@ -53,32 +32,27 @@ public static class ToolCalls
     /// <param name="tool">The tool to describe.</param>
     /// <param name="schemas">Whether to include the schemas.</param>
     /// <returns>The description.</returns>
-    public static object Describe(AgentTool tool, bool schemas = false)
+    public static object Describe(AgentToolDescriptor tool, bool schemas = false)
     {
         ArgumentNullException.ThrowIfNull(tool);
 
+        var declaration = tool.Declaration;
+
         return new
         {
-            tool.Name,
-            tool.Title,
-            tool.Description,
-            tool.IsReadOnly,
-            tool.IsDestructive,
-            tool.IsIdempotent,
-            tool.IsOpenWorld,
-            ResultKind = tool.ResultKind.ToString(),
-            Labels = tool.Labels.ToDictionary(label => label.Key, label => label.Value?.ToString()),
-            InputSchema = schemas ? (JsonElement?)tool.InputSchema : null,
-            OutputSchema = schemas ? tool.OutputSchema : null
+            declaration.Name,
+            declaration.Title,
+            declaration.Description,
+            declaration.IsReadOnly,
+            declaration.IsDestructive,
+            declaration.IsIdempotent,
+            declaration.IsOpenWorld,
+            ResultKind = declaration.ResultKind.ToString(),
+            Labels = declaration.Labels.ToDictionary(label => label.Key, label => label.Value?.ToString()),
+            InputSchema = schemas ? (JsonElement?)tool.Tool.JsonSchema : null,
+            OutputSchema = schemas ? tool.Tool.ReturnJsonSchema : null
         };
     }
-
-    /// <summary>
-    /// Describes a tool the way a listing would.
-    /// </summary>
-    /// <param name="tool">The tool to describe.</param>
-    /// <returns>The description.</returns>
-    public static object Describe(AgentTool tool) => Describe(tool, schemas: true);
 
     /// <summary>
     /// Puts a result on one line.

@@ -25,8 +25,14 @@ the call, so a caller is never offered something that then refuses them.
 registration carries — which begins with the attributes on the tool's own type:
 
 ```csharp
-[AuthorizeAnyAccess(ContentAccesses.AuthorsRead)]
-public class AuthorsGetTool : AgentTool<AuthorGetArguments, AuthorDetail>
+[AgentToolType]
+[Authorize(Policy = "tickets.read")]     // the whole family
+public sealed class TicketTools(TicketStore tickets)
+{
+    [AgentTool("support_tickets_delete", Destructive = true)]
+    [Authorize(Policy = "tickets.admin")]  // and this one narrows it
+    public Task<TicketDeleted> Delete(long id) => …;
+}
 ```
 
 That is the same attribute that would sit on a controller action. It produces the same
@@ -36,8 +42,8 @@ the endpoint beside it cannot drift into deciding the same caller differently.
 Enable it with one call:
 
 ```csharp
-builder.Services.AddAgentTools();
-builder.Services.AddAgentToolAuthorization();
+builder.Services.AddAgentToolsWeb()
+    .WithAuthorization();
 ```
 
 Three shapes are read, all of them ASP.NET Core's own, and all of them combined rather than one
@@ -53,23 +59,32 @@ A permission attribute, a scope attribute, a policy attribute or one nobody has 
 work, and none of them reach this library. `AuthenticationSchemes` is ignored: acting on it means
 challenging a caller to authenticate again, and an invocation has no request to challenge.
 
-Attributes are read from the tool's type **and everything it derives from**, so a family of tools
-sharing a requirement declares it once on a base class.
+Attributes are read from the holding class first and the method after, and from a type **and
+everything it derives from**, so a family of tools declares a shared requirement once and one
+method adds to it. They combine rather than replace, so the example above needs both.
 
 ## Registrations carry it too
 
 An attribute is only one way to say it. Anything a registration carries counts the same, which is
-what lets a tool nobody wrote an attribute for — one adapted from an `AIFunction`, one fetched from
-a foreign server — be gated at all:
+what lets a tool nobody wrote an attribute for — one that is just a function, one fetched from a
+foreign server — be gated at all:
 
 ```csharp
-builder.Services.AddAgentTool(searchFunction)
-                .RequireAuthorization("tools.search");
+builder.Services.AddAgentTool(searchFunction, declaration,
+    tool => tool.RequireAuthorization("tools.search"));
 ```
 
 The overloads mirror minimal APIs: no argument for an authenticated caller, policy names, an
 `IAuthorizeData`, requirements, a built `AuthorizationPolicy`, or a builder callback. Each one
 **adds**, so `RequireAuthorization` on a type that already carries an attribute means both.
+
+They are extension methods on the `IAgentToolConventionBuilder` the registration callback is handed, and
+that builder does not outlive the call. See [Hosting](/docs/agentic/hosting#registration-says-everything-inside-the-call)
+for why.
+
+For tools from a source, which have no registration to configure, attach the same attributes with
+[`AgentToolCuration.Adding`](/docs/agentic/sources#curation) — or, for the MCP source, with its
+`Metadata` option.
 
 ## A tool that declares nothing is open
 
@@ -82,8 +97,37 @@ per tool would gate a tool on a policy written for a route. A host that wants ev
 so on the tools — or registers a filter of its own, which is what filters are for.
 
 `[AllowAnonymous]` waives whatever else the registration declares, so it beside `[Authorize]` opens
-the tool. ASP.NET Core's semantics, footgun included. It also keeps [the tripwire](/docs/agentic/hosting)
-quiet, because a gate the host waived on purpose is not a gate nothing is enforcing.
+the tool. ASP.NET Core's semantics, footgun included. It also keeps the tripwire quiet, because a
+gate the host waived on purpose is not a gate nothing is enforcing.
+
+## The tripwire
+
+There is no setting to turn authorization on, and something better instead. If a tool carries
+authorization while nothing is enforcing it, the registry refuses to compose:
+
+```
+The tool 'support_tickets_get' carries authorization, but nothing in this host enforces it.
+Call WithAuthorization(), or register an AgentToolEnforcementMarker beside whatever
+enforces it instead.
+```
+
+Forgetting the call would otherwise open every tool that thought it was gated, and the failure is
+silent: a tool with `[Authorize]` on it looks gated in the source and is not.
+
+`EnforcementDeclaredValidator` is the one thing `AddAgentToolsCore()` registers without being asked.
+It lives in the core package, which does not reference ASP.NET Core — a console host federating
+MCP servers should not acquire a web framework to be told this — so it recognises a gate by
+looking for metadata implementing an interface named `IAuthorizeData` or
+`IAuthorizationRequirementData` **in the `Microsoft.AspNetCore.Authorization` namespace**. A name
+check is not pretty. The alternatives were worse: a dependency in the console path, or a tripwire
+registered by the very call it exists to catch you forgetting.
+
+A host enforcing authorization its own way — a filter reading a table, a service this library has
+never heard of — says so by registering the marker beside whatever does the enforcing:
+
+```csharp
+builder.Services.AddSingleton<AgentToolEnforcementMarker>();
+```
 
 ## No caller is not a refusal
 
@@ -97,17 +141,17 @@ left free to permit a call made by nobody, which is how a worker or a scheduler 
 One filter answers both questions, and that is the point rather than a convenience.
 
 ```csharp
-var offered = await invoker.GetAvailableToolsAsync(context, cancellationToken);      // what could they call
-await invoker.InvokeCompleteAsync(name, argumentsJson, context, cancellationToken);  // let them call it
+var offered = await executor.GetAvailableToolsAsync(cancellationToken);      // what could they call
+await executor.InvokeCompleteAsync(name, argumentsJson, cancellationToken);  // let them call it
 ```
 
-`GetAvailableToolsAsync` filters with the same filters `InvokeAsync` enforces, so a caller is never
-shown a tool that then refuses them, nor refused one it was shown. A separate listing rule would be
-a second implementation of the same decision, and the two would drift.
+The listing filters with the same filters the call enforces, so a caller is never shown a tool
+that then refuses them, nor refused one it was shown. A separate listing rule would be a second
+implementation of the same decision, and the two would drift.
 
 It lives on the invoker rather than the registry because the invoker is the one place holding both
-the tools and the decision. The registry has no notion of a caller, and keeping it that way is what
-stops the filtering from happening somewhere it cannot be kept honest.
+the tools and the decision. The registry knows a caller only well enough to ask its sources, and
+keeping it that way is what stops the filtering from happening somewhere it cannot be kept honest.
 
 **The listing is ergonomics; the call is enforcement.** A filter whose answer moves — keyed on the
 time of day, a budget being spent — can disagree with itself between the two, and where it does,
@@ -115,19 +159,18 @@ showing a tool that then refuses is the better failure: a false positive costs o
 where a tool silently missing is one nobody can diagnose. Enforcement on invocation is
 unconditional and there is no setting for it.
 
-That symmetry is also why the context carries only the caller. Which tool and what arguments are
-parameters, so the same context answers both questions without a listing having to supply a tool
-name it does not have.
+That is also why the tools a chat client is handed re-enter the executor when called. A listing
+made twenty minutes ago is not a permission.
 
-## The tool is the resource
+## The descriptor is the resource
 
-The tool is passed as the authorization resource, so a handler can narrow on it without this
-library knowing that is happening:
+The whole descriptor is passed as the authorization resource, so a handler can narrow both on
+what the tool declares and on what the host said about it:
 
 ```csharp
 protected override Task HandleRequirementAsync(AuthorizationHandlerContext context, McpSurfaceRequirement requirement)
 {
-    if (context.Resource is AgentTool { IsDestructive: true } && !context.User.IsInRole("operator"))
+    if (context.Resource is AgentToolDescriptor { Declaration.IsDestructive: true } && !context.User.IsInRole("operator"))
     {
         return Task.CompletedTask;      // no Succeed, so it is refused
     }
@@ -138,15 +181,18 @@ protected override Task HandleRequirementAsync(AuthorizationHandlerContext conte
 }
 ```
 
-Which is how a second, agent-facing gate gets written: a policy keyed on what the tool declares
-about itself — destructive, read-only, whatever a [label](/docs/agentic/labels) adds — sitting
-beside the domain's own access check rather than mirroring it.
+Handing over only the tool would have closed off the second half — and would have been useless for
+a tool that is a plain function, which has no type of its own to narrow on. Which is how a second,
+agent-facing gate gets written: a policy keyed on what the tool declares about itself —
+destructive, read-only, whatever a [label](/docs/agentic/labels) adds — sitting beside the
+domain's own access check rather than mirroring it.
 
 ## Surfaces are the host's own
 
 There is no framework notion of which surface a tool belongs to, and no property on the context
 carrying which one a call arrived on. Both halves are the application's: the tool side is a
-[label](/docs/agentic/labels), and the caller side is a context of your own.
+[label](/docs/agentic/labels), and the caller side is a context of your own, built by your
+[context factory](/docs/agentic/hosting#who-is-asking).
 
 ```csharp
 public sealed class SupportDeskAgentToolContext : AgentToolContext
@@ -166,7 +212,7 @@ public sealed class SurfaceAgentToolFilter : IAgentToolFilter
             return ValueTask.FromResult(AgentToolFilterDecision.Allow());
         }
 
-        var declared = tool.Tool.TryGetLabel<string>(SupportDeskLabels.Surfaces, out var value) ? value! : string.Empty;
+        var declared = tool.Declaration.TryGetLabel<string>(SupportDeskLabels.Surfaces, out var value) ? value! : string.Empty;
 
         return ValueTask.FromResult(
             declared.Split(',', StringSplitOptions.TrimEntries).Contains(surface, StringComparer.Ordinal)

@@ -1,0 +1,191 @@
+---
+title: MCP
+description: Tools from upstream MCP servers, and this host's tools served over MCP.
+---
+
+# MCP
+
+Two packages, independent of each other. A host can federate upstream servers without serving
+anything, serve without federating, or do both — in which case a tool read off one server can be
+offered to another without this host writing a line about either.
+
+```bash
+dotnet add package ApricotFramework.Agentic.Tools.Mcp.Client
+dotnet add package ApricotFramework.Agentic.Tools.Mcp.Server
+```
+
+Neither adapter is doing much work, and that is the whole argument for a tool being an
+`AIFunction`: an `McpClientTool` already is one, and `McpServerTool.Create` already takes one.
+
+## Tools from upstream servers
+
+```csharp
+builder.Services.AddAgentToolsCore()
+    .WithStaticMcpClients(builder.Configuration)
+    .WithMcpTools(options => options.Prefix = "up_");
+```
+
+```json
+{
+  "AgentToolMcpServers": {
+    "Servers": [
+      { "Name": "everything", "Command": "npx", "Arguments": [ "-y", "@modelcontextprotocol/server-everything" ] },
+      { "Name": "docs", "Endpoint": "https://mcp.example.com/mcp" }
+    ]
+  }
+}
+```
+
+That is the whole of it for a console or desktop application: a list written down once, one
+pooled connection per server for the life of the process, every caller reaching the same ones.
+Connections are made when something first asks rather than at start-up, so a slow server delays a
+listing rather than a boot.
+
+A server that cannot be reached is logged and left out. A service that will not run because a
+third party is down is worse than one running with fewer tools — set `RequireEveryServer` to
+disagree.
+
+### Servers that differ per caller
+
+`StaticMcpClientProvider` hands everybody the same connections, which for a credentialed server
+is a data leak rather than an inconvenience. A host whose servers are connected per person writes
+the seam itself:
+
+```csharp
+public interface IMcpClientProvider
+{
+    ValueTask<IReadOnlyList<McpClient>> GetClientsAsync(
+        IAgentToolSourceContext context, CancellationToken cancellationToken = default);
+}
+```
+
+```csharp
+builder.Services.AddAgentToolsWeb()
+    .WithMcpClientProvider<PerUserMcpClientProvider>()
+    .WithMcpTools();
+```
+
+`context.User` is who to connect as, and `context.Services` is where to find whatever mints the
+credential. The library never owns a connection's credentials or lifetime, because it would guess
+both wrong.
+
+### Reading a foreign declaration
+
+Each `McpClientTool` goes into a descriptor **unwrapped**, with an `AgentToolDeclaration` beside
+it built from the protocol's annotations:
+
+| Annotation | Read as | Missing |
+| --- | --- | --- |
+| `ReadOnlyHint` | `IsReadOnly` | `false` |
+| `DestructiveHint` | `IsDestructive` | **`true`** — `DestructiveWhenUnstated` |
+| `IdempotentHint` | `IsIdempotent` | follows `IsReadOnly` |
+| `OpenWorldHint` | `IsOpenWorld` | `true` — it is a server over a wire |
+
+**Assume the worst about a missing hint.** The hints are optional and advisory. Defaulting an
+absent `DestructiveHint` to `true` costs you a stricter gate; defaulting it to `false` costs you a
+deletion.
+
+Every tool also carries an `mcp.origin` [label](/docs/agentic/labels) naming the server it came
+from, which is what a filter of yours keys on to treat one server's tools differently from
+another's.
+
+### Names
+
+`Prefix` defaults to `mcp_`, and the server's own name is folded in, so `echo` from a server
+calling itself `mcp-servers/everything` is offered as `mcp_everything_echo`. Two servers offering
+`search` therefore do not collide with each other, and neither shadows one of yours. Setting
+`Prefix` to null offers foreign names unchanged, which is a choice worth making deliberately.
+
+### Curation
+
+```csharp
+builder.Services.AddAgentToolsCore().WithMcpTools(options =>
+{
+    options.Metadata.Add(new AuthorizeAttribute("tools.external"));   // nothing foreign carries one
+
+    options.Curate = tool => Reviewed.Contains(tool.Name)             // an allowlist
+        ? tool.With(AgentToolDeclaration.From(tool.Declaration) with { Description = Pinned[tool.Name] })
+        : null;
+});
+```
+
+Four things are worth doing deliberately, and only the first is done for you:
+
+**Drop what would not pass.** On by default: a tool this host's validators would refuse is left
+out and logged, rather than costing you every other tool. The opposite of what is right for tools
+you wrote.
+
+**Gate it.** Nothing a foreign server hands over carries an authorization attribute, so
+`Metadata` is the only thing between your callers and it.
+
+**Pin the description.** A foreign tool's name, description and schema go straight into your
+model's prompt, and the server can change all three after you vetted them. That is a
+prompt-injection surface with no local equivalent.
+
+**Allowlist.** A server can add a tool after you reviewed what it offers, and naming the ones you
+reviewed is the only way that stays true.
+
+### Freshness
+
+A listing is cached per connection — asking every server on every call is a round trip per call.
+It is dropped when a server sends `notifications/tools/list_changed`, and `Lifetime` (five
+minutes by default) is the backstop for a server that does not send one, or a notification lost
+with a dropped connection.
+
+Anything else that learns a server's tools changed can say so:
+
+```csharp
+provider.GetRequiredService<IMcpToolInvalidation>().Invalidate();
+```
+
+## Serving this host's tools
+
+```csharp
+builder.Services
+    .AddMcpServer()
+    .WithHttpTransport()
+    .WithAgentTools();
+
+    .WithAgentTools();
+
+builder.Services.AddAgentToolsWeb();            // who the caller is, over HTTP
+```
+
+`WithAgentTools()` wires `tools/list` and `tools/call` as **handlers**, not as a registered tool
+collection. A collection is fixed when the server is built, and a listing here is not: a tool an
+upstream server added, or one this caller may no longer reach, shows up — or stops showing up —
+on the next `tools/list` without a restart. That is also why the server advertises
+`tools.listChanged`.
+
+Each call goes through `IAgentToolExecutor`, so it opens its own scope, gets its own invocation
+context, and passes the same filters the listing passed. A tool listed an hour ago and revoked
+since is refused rather than run.
+
+The protocol returns one result per call, so a sequence tool is collected. Structured content is
+used where the tool published an output schema.
+
+### Who the caller is
+
+The MCP package registers no context factory of its own. Over HTTP, `AddAgentToolsWeb()`
+from the ASP.NET Core package reads the request's principal, which is the one this host already
+authenticated. Over stdio there is no caller, and `DefaultAgentToolContextFactory` says so rather
+than inventing one.
+
+### Errors
+
+`AgentToolException` becomes `McpException`, preserving refusal versus fault — a refusal that
+reads as a fault invites a model to retry it, and an agent will accept the invitation.
+
+| Thrown | Reported as |
+| --- | --- |
+| `AgentToolNotFoundException` | "Do not retry; list the tools again." |
+| `AgentToolAccessDeniedException` | "Do not retry." |
+| `AgentToolArgumentException` | "Correct the arguments and try again." |
+| anything else | the message, unqualified |
+
+## Both at once
+
+A host that does both is a gateway: upstream servers come in through the client source, this
+host's own tools sit beside them in one registry, one set of filters decides what a caller may
+reach, and the MCP server offers whatever survives. Nothing in the middle knows which tools were
+local.

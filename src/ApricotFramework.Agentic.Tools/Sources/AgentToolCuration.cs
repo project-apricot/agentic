@@ -1,4 +1,3 @@
-using ApricotFramework.Agentic.Tools.Adapters;
 using ApricotFramework.Agentic.Tools.Exceptions;
 
 namespace ApricotFramework.Agentic.Tools.Sources;
@@ -20,15 +19,21 @@ public static class AgentToolCuration
     /// <returns>The curator.</returns>
     /// <exception cref="ArgumentException">Thrown when <paramref name="prefix"/> is null or blank.</exception>
     /// <remarks>
+    /// <para>
     /// The answer to a foreign server whose names were chosen without knowing what they would sit
     /// beside. A collision is genuinely ambiguous, and the registry refuses it rather than picking
     /// one, so putting the names in a space of their own is what keeps that from happening.
+    /// </para>
+    /// <para>
+    /// Nothing wraps the function. A prefixed tool is the same function under a different
+    /// declaration, so a consumer reaching through it for what it really is still finds it.
+    /// </para>
     /// </remarks>
     public static Func<AgentToolDescriptor, AgentToolDescriptor?> Prefixing(string prefix)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(prefix);
 
-        return tool => new AgentToolDescriptor(new RenamedAgentTool(tool.Tool, prefix + tool.Name), tool.Metadata);
+        return tool => tool.With(AgentToolDeclaration.From(tool.Declaration) with { Name = prefix + tool.Name });
     }
 
     /// <summary>
@@ -46,7 +51,7 @@ public static class AgentToolCuration
     {
         ArgumentNullException.ThrowIfNull(metadata);
 
-        return tool => new AgentToolDescriptor(tool.Tool, [.. tool.Metadata, .. metadata]);
+        return tool => tool.With(tool.Declaration, [.. tool.Metadata, .. metadata]);
     }
 
     /// <summary>

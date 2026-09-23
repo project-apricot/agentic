@@ -14,7 +14,7 @@ public class DelegatingAgentToolInvokerTests
 
     private const string Arguments = """{"id":1}""";
 
-    private static AgentToolContext Caller() => new();
+    private static AgentToolContext Caller() => Probes.Context();
 
     [Fact]
     public async Task Delegating_PassesEverythingThroughByDefault()
@@ -90,7 +90,7 @@ public class DelegatingAgentToolInvokerTests
 
         public int Streams { get; private set; }
 
-        public override ValueTask<IReadOnlyList<AgentTool>> GetAvailableToolsAsync(AgentToolContext context, CancellationToken cancellationToken = default)
+        public override ValueTask<IReadOnlyList<AgentToolDescriptor>> GetAvailableToolsAsync(AgentToolContext context, CancellationToken cancellationToken = default)
         {
             this.Listings++;
 
@@ -130,9 +130,9 @@ public class DelegatingAgentToolInvokerTests
     /// <param name="inner">The invoker to pass calls to.</param>
     private sealed class HideEverything(IAgentToolInvoker inner) : DelegatingAgentToolInvoker(inner)
     {
-        public override ValueTask<IReadOnlyList<AgentTool>> GetAvailableToolsAsync(AgentToolContext context, CancellationToken cancellationToken = default)
+        public override ValueTask<IReadOnlyList<AgentToolDescriptor>> GetAvailableToolsAsync(AgentToolContext context, CancellationToken cancellationToken = default)
         {
-            return ValueTask.FromResult<IReadOnlyList<AgentTool>>([]);
+            return ValueTask.FromResult<IReadOnlyList<AgentToolDescriptor>>([]);
         }
     }
 }

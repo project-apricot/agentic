@@ -15,7 +15,7 @@ public sealed class DescriptionDeclaredValidator : IAgentToolValidator
     {
         ArgumentNullException.ThrowIfNull(tool);
 
-        if (string.IsNullOrWhiteSpace(tool.Tool.Description))
+        if (string.IsNullOrWhiteSpace(tool.Declaration.Description))
         {
             throw new AgentToolDeclarationException($"The tool '{tool.Name}' declares no description.");
         }

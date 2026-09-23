@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>ApricotFramework.Agentic.Tools.Grpc</RootNamespace>
+    <Description>The gRPC contract every service with an agent lane implements: list the tools it owns, and invoke one. Schemas and results travel as JSON text rather than as a protobuf struct, so an Int64 identifier survives the round trip. Messages only - the server and client halves are separate packages.</Description>
+    <PackageTags>ai;agent;agentic;tools;grpc;protobuf;contract</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Protobuf Include="Contract/**/*.proto" ProtoRoot="Contract" GrpcServices="Both" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Shipped so a service in another language can implement the same contract. -->
+    <None Include="Contract/apricot/agentic/v1/tools.proto" Pack="true" PackagePath="protos/apricot/agentic/v1/" Visible="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Google.Protobuf" />
+    <PackageReference Include="Grpc.Core.Api" />
+    <PackageReference Include="Grpc.Tools" PrivateAssets="All" />
+  </ItemGroup>
+
+</Project>

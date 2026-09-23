@@ -1,24 +1,44 @@
-using System.Runtime.CompilerServices;
 using ApricotFramework.Agentic.Examples.SupportDesk.Data;
 using ApricotFramework.Agentic.Examples.SupportDesk.Model;
 using ApricotFramework.Agentic.Tools;
+using ApricotFramework.Agentic.Tools.Serialization;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.Extensions.AI;
+using System.Runtime.CompilerServices;
+using System.Text.Json;
 
 namespace ApricotFramework.Agentic.Examples.SupportDesk.Tools;
 
 /// <summary>
-/// Lists the tickets on the desk.
+/// Every ticket, reported as they come.
 /// </summary>
 /// <remarks>
-/// A sequence tool, because a caller can read the first tickets before the last ones arrive. Note
-/// that streaming at the tool boundary only helps if the source streams too - this one yields from
-/// a list, so it is stream-shaped rather than streaming, which is honest about what an example can
-/// demonstrate.
+/// <para>
+/// The one tool here written by hand against <see cref="AgentTool"/> rather than as a method, and
+/// the reason is the only one that justifies it: a result that arrives as a sequence. An
+/// <see cref="AIFunction"/> returns one value, so <see cref="AgentTool.InvokeStreamingAsync"/> is
+/// the only way to hand a caller items before the last one exists.
+/// </para>
+/// <para>
+/// What that costs is visible below - the schemas, the flags and the argument handling are all
+/// stated by hand, where a method gets them from the function factory. Worth it here, and not
+/// worth it for the other fourteen tools on this desk.
+/// </para>
+/// <para>
+/// A caller that cannot stream still sees the whole array: <see cref="InvokeCoreAsync"/> collects,
+/// which is what an MCP <c>tools/call</c> and a chat client get.
+/// </para>
 /// </remarks>
+/// <param name="store">Where the tickets are.</param>
 [Authorize(Policy = SupportDeskPolicies.TicketsRead)]
-[AgentToolLabel(SupportDeskLabels.Sensitivity, Sensitivity.Internal)]
-public sealed class TicketsListTool(SupportDeskStore store) : SupportDeskStreamTool<AgentToolNoArguments, TicketSummary>
+[AgentToolLabel(SupportDeskLabels.Area, "support-desk")]
+[AgentToolLabel(SupportDeskLabels.Surfaces, SupportDeskSurfaces.Both)]
+[Sensitivity(Sensitivity.Internal)]
+public sealed class TicketsListTool(SupportDeskStore store) : AgentTool
 {
+    /// <summary>A tool that takes nothing.</summary>
+    private static readonly JsonElement NoArguments = JsonDocument.Parse("""{"type":"object"}""").RootElement.Clone();
+
     /// <inheritdoc />
     public override string Name => "support_tickets_list";
 
@@ -38,22 +58,29 @@ public sealed class TicketsListTool(SupportDeskStore store) : SupportDeskStreamT
     public override bool IsDestructive => false;
 
     /// <inheritdoc />
-    protected override async IAsyncEnumerable<TicketSummary> ExecuteAsync(
-        AgentToolNoArguments arguments,
-        AgentToolContext context,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
+    public override AgentToolResultKind ResultKind => AgentToolResultKind.Sequence;
+
+    /// <inheritdoc />
+    public override JsonElement JsonSchema => NoArguments;
+
+    /// <inheritdoc />
+    /// <remarks>The assembled array, not one item, so no consumer has to reconstruct the outer shape.</remarks>
+    public override JsonElement? ReturnJsonSchema => AgentToolJson.Schema<IReadOnlyList<TicketSummary>>();
+
+    /// <inheritdoc />
+    public override async IAsyncEnumerable<object?> InvokeStreamingAsync(
+        AIFunctionArguments arguments,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         foreach (var ticket in store.Tickets())
         {
             await Task.Yield();
 
-            yield return new TicketSummary
-            {
-                Id = ticket.Id,
-                Subject = ticket.Subject,
-                Status = ticket.Status,
-                Assignee = ticket.Assignee
-            };
+            yield return TicketTools.Summarise(ticket);
         }
     }
+
+    /// <inheritdoc />
+    protected override ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken) =>
+        ValueTask.FromResult<object?>(store.Tickets().Select(TicketTools.Summarise).ToList());
 }

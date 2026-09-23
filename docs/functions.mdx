@@ -1,131 +1,118 @@
 ---
-title: Tools from functions
-description: Adapting an AIFunction — including a foreign MCP server's tools — into a tool.
+title: Tools that are not classes
+description: A function, a delegate or a foreign tool, offered on terms this host sets — without anything wrapping it.
 ---
 
-# Tools from functions
+# Tools that are not classes
 
-Not every tool is a class somebody wrote. A delegate, something assembled from configuration, or a
-tool read off a server the host merely speaks to — all of these are
-`Microsoft.Extensions.AI.AIFunction`, and `AgentTool.Create` adapts any of them.
-
-```csharp
-var tool = AgentTool.Create(function, new AgentToolCreateOptions
-{
-    IsReadOnly    = true,
-    IsDestructive = false,
-});
-```
-
-The function supplies its name, its prose and its schemas. The options supply what it cannot know:
-whether calling it changes anything. Both are `required` for the same reason they are abstract on
-`AgentTool` — a default would be the one nobody notices inheriting, and a policy keyed on
-"destructive" is worth nothing if a tool can arrive without having said.
-
-`Name`, `Title`, `Description`, `OutputSchema`, `Labels` and `SerializerOptions` are all
-overridable; anything left unset comes from the function.
-
-## Foreign MCP servers
-
-This is the case the adapter mostly exists for. An MCP client's tool **is** an `AIFunction`, so a
-third party's tools reach this model through the same path as everything else:
+Not every tool is something somebody wrote here. A delegate, something assembled from
+configuration, a tool read off an MCP server, a tool another service owns — all of them are
+`Microsoft.Extensions.AI.AIFunction` or can be described as one, and all of them go into the
+registry **as they are**.
 
 ```csharp
-foreach (var remote in await mcpClient.ListToolsAsync(cancellationToken))
-{
-    var annotations = remote.ProtocolTool.Annotations;
-
-    services.AddAgentTool(remote, new AgentToolCreateOptions
+builder.Services.AddAgentTool(
+    function,
+    new AgentToolDeclaration
     {
-        Name          = $"weather_{remote.Name}",          // yours, not theirs
-        Description   = descriptions[remote.Name],         // pinned, see below
-        IsReadOnly    = annotations?.ReadOnlyHint ?? false,
-        IsDestructive = annotations?.DestructiveHint ?? true,
-        Labels        = new Dictionary<string, object?> { ["origin"] = "weather-co" },
-    }).RequireAuthorization("tools.external");
-}
+        Name = "weather_search",
+        Description = "Searches a third party weather index.",
+        IsReadOnly = true,
+        IsDestructive = false,
+        IsOpenWorld = true,
+    },
+    tool => tool.RequireAuthorization("tools.external"));
 ```
 
-Four things worth doing deliberately, none of which the library can do for you:
+## The declaration sits beside the function, not on it
 
-**Rename.** A foreign `search` will collide with, or shadow, something of yours. The registry
-rejects a duplicate name, which is the right failure — but prefixing avoids reaching it.
+An `AgentToolDescriptor` holds three things:
 
-**Pin the description.** A foreign tool's name, description and schema go straight into your
+```csharp
+AIFunctionDeclaration Tool { get; }        // the function, exactly as it arrived
+IAgentToolDeclaration Declaration { get; } // name, title, prose, behaviour, labels
+IReadOnlyList<object> Metadata { get; }    // whatever the host said
+```
+
+A hand-written `AgentTool` satisfies both of the first two itself, so registering it fills them
+from one object. A method tool has its declaration built from its attributes. A bare function has
+neither, so the declaration is supplied beside it.
+
+This is why there is **no wrapper type** — no `FunctionAgentTool`, no `RenamedAgentTool`, no
+`DelegatingAgentTool`. Three things follow from that, and they are the reason for the shape:
+
+**Identity survives.** A consumer reaching through a listed tool for what is really behind it
+still finds it. That matters most for an MCP client's tool, where
+`descriptor.Tool.GetService<McpClientTool>()` is how the SDK gets back to its own type — and an
+object in the way would have had to remember to forward it.
+
+**Renaming is not a wrapper.** A foreign `search` will collide with, or shadow, something of
+yours. Offering it under another name is a different declaration over the same function:
+
+```csharp
+descriptor.With(AgentToolDeclaration.From(descriptor.Declaration) with { Name = "weather_search" })
+```
+
+which is exactly what [`AgentToolCuration.Prefixing`](/docs/agentic/sources#curation) does.
+
+**So is pinning prose.** A foreign tool's name, description and schema go straight into your
 model's prompt, and the server can change all three after you vetted them. That is a
-prompt-injection surface with no local equivalent. Overriding `Description` with text you control
-is the cheap mitigation; an allowlist of tool names is the other half.
+prompt-injection surface with no local equivalent, and overriding `Description` with text you
+control is the cheap mitigation:
 
-**Assume the worst about the hints.** `DestructiveHint` is optional and advisory. Defaulting a
-missing one to `true` costs you a stricter gate; defaulting it to `false` costs you a deletion.
+```csharp
+descriptor.With(AgentToolDeclaration.From(descriptor.Declaration) with
+{
+    Description = "Searches a third party weather index. Returns at most ten results."
+})
+```
 
-**Gate it yourself.** A foreign tool carries no authorization attribute, so `RequireAuthorization`
+## What the function cannot say for itself
+
+`AgentToolDeclaration` requires `Name`, `IsReadOnly` and `IsDestructive`, for the same reason
+those are abstract on `AgentTool`: a default would be the one nobody notices, and a policy keyed
+on "destructive" is worth nothing if a tool can arrive without having said. `Title` falls back to
+the name, `IsIdempotent` to `IsReadOnly`, and `ResultKind` is `Whole` — a function returns one
+value, whatever else is claimed about it.
+
+**Assume the worst about a missing hint.** The MCP annotations are optional and advisory.
+Defaulting an absent `DestructiveHint` to `true` costs you a stricter gate; defaulting it to
+`false` costs you a deletion. The [MCP source](/docs/agentic/mcp#reading-a-foreign-declaration)
+does the former, and so should you.
+
+`ResultKind` is `Whole` and cannot be anything else: a function returns one value, and the
+registry refuses a declaration claiming otherwise. Only an [`AgentTool`](/docs/agentic/tools#the-one-case-that-needs-a-class)
+can produce items.
+
+**Gate it yourself.** A function has no class to carry an attribute, so the registration callback
 is the only thing standing between your callers and it.
 
-## When a foreign declaration would not pass
+## Something described but not runnable
 
-Adapting through `AgentTool.Create` heads most of this off, because `AgentToolCreateOptions`
-*makes* you supply what it cannot know: whether calling it destroys anything, and whether it only
-reads. But a server can still hand you prose that is empty, or a name that
-collides with another server's, and by default one such tool takes the whole registry with it —
-the registry refuses a declaration it cannot accept, which is right for tools you wrote and wrong
-for tools you merely reached.
+`Descriptor.Tool` is typed as `AIFunctionDeclaration`, not `AIFunction`, so a descriptor can carry
+a tool this host has no way to invoke — a catalogue listing what a fleet offers without holding a
+transport to any of it. Listing one is fine; calling it throws `AgentToolNotInvocableException`,
+rather than every listing having to pretend it could.
 
-Wrap the source and look its tools over first:
+`descriptor.AsFunction()` returns the function, or null where only a description is held.
 
-```csharp
-var foreign = new CuratingAgentToolSource(
-    new CuratingAgentToolSource(mcpSource, AgentToolCuration.Prefixing("weather_")),
-    AgentToolCuration.DropRejected(validators, (tool, why) => logger.LogWarning(why, "Left out {Tool}", tool.Name)));
-```
+## Reaching the invocation from a function
 
-The curator sees each tool and returns it, a wrapper to offer it differently, or null to leave it
-out. Those two answers cover different failures:
-
-| Curator | For |
-| --- | --- |
-| `AgentToolCuration.DropRejected(validators, onRejected)` | One malformed declaration costing you that tool rather than all of them |
-| `AgentToolCuration.Prefixing("weather_")` | Names chosen without knowing what they would sit beside |
-| `AgentToolCuration.Where(predicate)` | An allowlist — a server can add a tool after you reviewed what it offers |
-
-**Report what you drop.** A tool silently absent is the failure nobody can diagnose, and dropping
-turns a loud failure into a quiet one on purpose. The `onRejected` callback carries the tool and
-the reason.
-
-**A collision is the one thing no per-tool check can find**, because it is only visible once both
-tools are in front of the registry. `Prefixing` avoids it rather than detecting it; the registry
-still refuses an ambiguous name rather than picking one, which is the right failure for something
-genuinely undecidable.
-
-## Fixing rather than dropping
-
-`DelegatingAgentTool` passes everything through so a wrapper says only what it changes — which is
-how a host takes responsibility for a declaration it inherited:
+A function written against this library takes the caller and the scope from the arguments, where
+the AI abstractions already keep such things:
 
 ```csharp
-private sealed class Reviewed(AgentTool inner) : DelegatingAgentTool(inner)
-{
-    public override string Description => "Searches a third party weather index.";   // prose you wrote
-    public override bool IsDestructive => true;                                      // assume the worst
-}
+var function = AIFunctionFactory.Create(
+    (AIFunctionArguments arguments) =>
+    {
+        var context = arguments.RequireAgentToolContext();   // who is asking
+        var services = arguments.Services;                   // the scope this call opened
+        …
+    },
+    "inspect",
+    "Looks at its own invocation.");
 ```
 
-`RenamedAgentTool` is the ready-made one for the case that comes up most, and changes the name
-only — `Title` is a label a person reads and stays whatever the tool called itself.
-
-## Labels and the context
-
-A constructed tool carries labels it was handed rather than ones it declared, and the reading side
-cannot tell the difference — so a policy written against `sensitivity` applies to both kinds.
-
-A function that needs more than its arguments finds the whole invocation in its own context bag:
-
-```csharp
-var context = arguments.Context?[typeof(AgentToolContext)] as AgentToolContext;
-```
-
-## What it cannot do
-
-A function returns one value, so a constructed tool is always
-`AgentToolResultKind.Whole`. Streaming needs `AgentStreamTool<TArguments, TItem>`, which means a
-class.
+`GetAgentToolContext()` is the forgiving form. `GetPayload()` returns the caller's own JSON where
+there was any — which is what a tool should prefer over the named arguments when it has a shape of
+its own to deserialise, because nothing has rounded a number in it.

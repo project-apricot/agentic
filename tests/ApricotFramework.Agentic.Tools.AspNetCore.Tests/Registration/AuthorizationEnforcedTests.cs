@@ -3,6 +3,7 @@ using ApricotFramework.Agentic.Tools.AspNetCore.Authorization;
 using ApricotFramework.Agentic.Tools.AspNetCore.Extensions;
 using ApricotFramework.Agentic.Tools.Exceptions;
 using ApricotFramework.Agentic.Tools.Invocation;
+using ApricotFramework.Agentic.Tools.Validators;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -21,8 +22,7 @@ public class AuthorizationEnforcedTests
         services.AddLogging();
         services.AddAuthorization();
         services.AddSingleton<IAuthorizationHandler>(new ProbeHandler("granted", "inherited"));
-        services.AddAgentTools();
-        services.AddAgentToolAuthorization();
+        services.AddAgentToolsCore().WithAuthorization();
 
         return services;
     }
@@ -38,7 +38,7 @@ public class AuthorizationEnforcedTests
 
         // "granted" and "inherited" are held, so this passes
         await host.GetRequiredService<IAgentToolInvoker>().InvokeCompleteAsync(
-            "probe_items_gated", null, new AgentToolContext { User = Caller() }, TestContext.Current.CancellationToken);
+            "probe_items_gated", null, Probes.Context(Probes.Empty, Caller()), TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -54,7 +54,7 @@ public class AuthorizationEnforcedTests
         var host = services.BuildServiceProvider();
 
         var result = await host.GetRequiredService<IAgentToolInvoker>().InvokeCompleteAsync(
-            "probe_items_ungated", null, new AgentToolContext { User = Caller() }, TestContext.Current.CancellationToken);
+            "probe_items_ungated", null, Probes.Context(Probes.Empty, Caller()), TestContext.Current.CancellationToken);
 
         Assert.Equal("\"ok\"", result);
     }
@@ -67,7 +67,7 @@ public class AuthorizationEnforcedTests
         services.AddAgentTool<UngatedProbe>();
 
         var tools = await services.BuildServiceProvider().GetRequiredService<IAgentToolInvoker>()
-            .GetAvailableToolsAsync(new AgentToolContext { User = Caller() }, TestContext.Current.CancellationToken);
+            .GetAvailableToolsAsync(Probes.Context(Probes.Empty, Caller()), TestContext.Current.CancellationToken);
 
         Assert.Equal(["probe_items_ungated"], tools.Select(tool => tool.Name));
     }
@@ -83,14 +83,13 @@ public class AuthorizationEnforcedTests
         services.AddLogging();
         services.AddAuthorization(options =>
             options.FallbackPolicy = new AuthorizationPolicyBuilder().RequireClaim("never-held").Build());
-        services.AddAgentTools();
-        services.AddAgentToolAuthorization();
+        services.AddAgentToolsCore().WithAuthorization();
         services.AddAgentTool<UngatedProbe>();
 
         var host = services.BuildServiceProvider();
 
         var offered = await host.GetRequiredService<IAgentToolInvoker>().GetAvailableToolsAsync(
-            new AgentToolContext { User = Caller() }, TestContext.Current.CancellationToken);
+            Probes.Context(Probes.Empty, Caller()), TestContext.Current.CancellationToken);
 
         Assert.Equal(["probe_items_ungated"], offered.Select(tool => tool.Name));
     }
@@ -107,12 +106,12 @@ public class AuthorizationEnforcedTests
         var host = services.BuildServiceProvider();
 
         var offered = await host.GetRequiredService<IAgentToolInvoker>().GetAvailableToolsAsync(
-            new AgentToolContext(), TestContext.Current.CancellationToken);
+            Probes.Context(Probes.Empty), TestContext.Current.CancellationToken);
 
         Assert.Equal(["probe_items_anonymous"], offered.Select(tool => tool.Name));
 
         var result = await host.GetRequiredService<IAgentToolInvoker>().InvokeCompleteAsync(
-            "probe_items_anonymous", null, new AgentToolContext(), TestContext.Current.CancellationToken);
+            "probe_items_anonymous", null, Probes.Context(Probes.Empty), TestContext.Current.CancellationToken);
 
         Assert.Equal("\"ok\"", result);
     }
@@ -125,12 +124,14 @@ public class AuthorizationEnforcedTests
 
         services.AddLogging();
         services.AddAuthorization();
-        services.AddAgentTools();
+        services.AddAgentToolsCore();
         services.AddAgentTool<AnonymousProbe>();
 
-        var registry = services.BuildServiceProvider().GetRequiredService<IAgentToolRegistry>();
+        var host = services.BuildServiceProvider();
 
-        Assert.Single(await registry.GetToolsAsync(TestContext.Current.CancellationToken));
+        var registry = host.GetRequiredService<IAgentToolRegistry>();
+
+        Assert.Single(await registry.GetToolsAsync(Probes.Context(host), TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -143,13 +144,15 @@ public class AuthorizationEnforcedTests
 
         services.AddLogging();
         services.AddAuthorization();
-        services.AddAgentTools();
+        services.AddAgentToolsCore();
         services.AddAgentTool<GatedProbe>();
 
-        var registry = services.BuildServiceProvider().GetRequiredService<IAgentToolRegistry>();
+        var host = services.BuildServiceProvider();
+
+        var registry = host.GetRequiredService<IAgentToolRegistry>();
 
         var exception = await Assert.ThrowsAsync<AgentToolDeclarationException>(
-            async () => await registry.GetToolsAsync(TestContext.Current.CancellationToken));
+            async () => await registry.GetToolsAsync(Probes.Context(host), TestContext.Current.CancellationToken));
 
         Assert.Contains("nothing in this host enforces it", exception.Message, StringComparison.Ordinal);
         Assert.Contains("AddAgentToolAuthorization", exception.Message, StringComparison.Ordinal);
@@ -164,13 +167,15 @@ public class AuthorizationEnforcedTests
 
         services.AddLogging();
         services.AddAuthorization();
-        services.AddAgentTools();
-        services.AddSingleton<AgentToolAuthorizationMarker>();
+        services.AddAgentToolsCore();
+        services.AddSingleton<AgentToolEnforcementMarker>();
         services.AddAgentTool<GatedProbe>();
 
-        var registry = services.BuildServiceProvider().GetRequiredService<IAgentToolRegistry>();
+        var host = services.BuildServiceProvider();
 
-        Assert.Single(await registry.GetToolsAsync(TestContext.Current.CancellationToken));
+        var registry = host.GetRequiredService<IAgentToolRegistry>();
+
+        Assert.Single(await registry.GetToolsAsync(Probes.Context(host), TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -181,7 +186,7 @@ public class AuthorizationEnforcedTests
         var services = new ServiceCollection();
 
         services.AddLogging();
-        services.AddAgentTools();
+        services.AddAgentToolsCore();
         services.AddAgentTool<UngatedProbe>();
 
         Assert.Empty(services.BuildServiceProvider().GetServices<IAgentToolFilter>());
@@ -199,10 +204,10 @@ public class AuthorizationEnforcedTests
 
         var host = services.BuildServiceProvider();
 
-        Assert.Single(await host.GetRequiredService<IAgentToolRegistry>().GetToolsAsync(TestContext.Current.CancellationToken));
+        Assert.Single(await host.GetRequiredService<IAgentToolRegistry>().GetToolsAsync(Probes.Context(host), TestContext.Current.CancellationToken));
 
         var result = await host.GetRequiredService<IAgentToolInvoker>().InvokeCompleteAsync(
-            "probe_items_ungated", null, new AgentToolContext(), TestContext.Current.CancellationToken);
+            "probe_items_ungated", null, Probes.Context(Probes.Empty), TestContext.Current.CancellationToken);
 
         Assert.Equal("\"ok\"", result);
     }
@@ -215,7 +220,9 @@ public class AuthorizationEnforcedTests
 
         services.AddAgentTool<TerseProbe>();
 
-        Assert.Single(await services.BuildServiceProvider().GetRequiredService<IAgentToolRegistry>()
-            .GetToolsAsync(TestContext.Current.CancellationToken));
+        var host = services.BuildServiceProvider();
+
+        Assert.Single(await host.GetRequiredService<IAgentToolRegistry>()
+            .GetToolsAsync(Probes.Context(host), TestContext.Current.CancellationToken));
     }
 }

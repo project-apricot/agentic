@@ -2,6 +2,8 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <Using Include="ApricotFramework.Agentic.Tools" />
+    <Using Include="ApricotFramework.Agentic.Tools.Extensions" />
   </ItemGroup>
 
   <ItemGroup>

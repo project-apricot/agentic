@@ -2,7 +2,7 @@ namespace ApricotFramework.Agentic.Tools.Tests.Discovery;
 
 /// <summary>An open generic, which cannot be instantiated as one tool.</summary>
 /// <typeparam name="TResult">Whatever it returns.</typeparam>
-public sealed class OpenGenericTool<TResult> : AgentTool<AgentToolNoArguments, TResult>
+public sealed class OpenGenericTool<TResult> : ProbeTool<ProbeNoArguments, TResult>
     where TResult : new()
 {
     /// <inheritdoc />
@@ -22,5 +22,5 @@ public sealed class OpenGenericTool<TResult> : AgentTool<AgentToolNoArguments, T
 
 
     /// <inheritdoc />
-    protected override Task<TResult> ExecuteAsync(AgentToolNoArguments arguments, AgentToolContext context, CancellationToken cancellationToken) => Task.FromResult(new TResult());
+    protected override Task<TResult> ExecuteAsync(ProbeNoArguments arguments, AgentToolContext context, CancellationToken cancellationToken) => Task.FromResult(new TResult());
 }

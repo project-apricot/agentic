@@ -18,7 +18,7 @@ public sealed class ConsistentBehaviourValidator : IAgentToolValidator
     {
         ArgumentNullException.ThrowIfNull(tool);
 
-        if (tool.Tool is { IsReadOnly: true, IsDestructive: true })
+        if (tool.Declaration is { IsReadOnly: true, IsDestructive: true })
         {
             throw new AgentToolDeclarationException($"The tool '{tool.Name}' declares itself both read only and destructive.");
         }

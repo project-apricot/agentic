@@ -1,32 +1,14 @@
-using System.Runtime.CompilerServices;
-using System.Text.Json;
 using ApricotFramework.Agentic.Tools.Exceptions;
 using ApricotFramework.Agentic.Tools.Filters;
+using Microsoft.Extensions.AI;
+using System.Runtime.CompilerServices;
+using System.Text.Json;
 
 namespace ApricotFramework.Agentic.Tools.Invocation;
 
 /// <summary>
-/// Answers what a caller could invoke and invokes it.
+/// Filters what a caller may reach, then runs it.
 /// </summary>
-/// <remarks>
-/// <para>
-/// The filters run here rather than in each tool, and that placement is the point. A check each
-/// tool is trusted to perform is a check a tool can forget, and the one that forgets looks exactly
-/// like the ones that do not. One gate every call passes through cannot be forgotten by adding a
-/// tool.
-/// </para>
-/// <para>
-/// The same filters decide both questions, so a caller is never offered a tool that then refuses
-/// them, nor refused one it was offered. That property is the reason a listing exists, and it
-/// holds structurally rather than by anybody remembering to keep two code paths in a step.
-/// </para>
-/// <para>
-/// What it does <em>not</em> do is reshaping a listing. Capping it, sorting it, or hiding something
-/// deprecated but still callable are all a <see cref="DelegatingAgentToolInvoker"/>'s business,
-/// and so is anything about the call rather than about what exists - a budget, a rate limit, an
-/// approval.
-/// </para>
-/// </remarks>
 public class AgentToolInvoker : IAgentToolInvoker
 {
     /// <summary>
@@ -48,8 +30,7 @@ public class AgentToolInvoker : IAgentToolInvoker
     /// <remarks>
     /// No filters at all mean every tool is offered to every caller. That is a host saying there
     /// is nothing to decide, which is true of a command line tool and false of almost everything
-    /// else - so the ASP.NET Core package registers the authorization filter for you and refuses
-    /// to start if a tool declares authorization that nothing is enforcing.
+    /// else.
     /// </remarks>
     public AgentToolInvoker(IAgentToolRegistry registry, IEnumerable<IAgentToolFilter>? filters = null)
     {
@@ -62,30 +43,29 @@ public class AgentToolInvoker : IAgentToolInvoker
     /// <inheritdoc />
     /// <remarks>
     /// <para>
-    /// What a surface advertises. Filtered by the same filters that would refuse the call, so a
-    /// tool listed here is one they accept.
+    /// Filtered by the same filters that would refuse the call, so a tool listed here is one they
+    /// accept.
     /// </para>
     /// <para>
     /// This is ergonomics rather than control: enforcement is <see cref="InvokeAsync"/> and
-    /// nothing else. A filter whose answer moves - keyed on the time of day, or on a budget being
-    /// spent - can disagree with itself between the listing and the call. Where it does,
-    /// showing a tool that then refuses is the better failure. A tool silently missing is one
-    /// nobody can diagnose.
+    /// nothing else. A filter whose answer moves can disagree with itself between the listing and
+    /// the call, and showing a tool that then refuses is the better failure - a tool silently
+    /// missing is one nobody can diagnose.
     /// </para>
     /// </remarks>
-    public async ValueTask<IReadOnlyList<AgentTool>> GetAvailableToolsAsync(AgentToolContext context, CancellationToken cancellationToken = default)
+    public async ValueTask<IReadOnlyList<AgentToolDescriptor>> GetAvailableToolsAsync(AgentToolContext context, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(context);
 
-        var tools = await this.registry.GetToolsAsync(cancellationToken).ConfigureAwait(false);
+        var tools = await this.registry.GetToolsAsync(context, cancellationToken).ConfigureAwait(false);
 
-        var available = new List<AgentTool>(tools.Count);
+        var available = new List<AgentToolDescriptor>(tools.Count);
 
         foreach (var tool in tools)
         {
             if ((await this.EvaluateAsync(tool, context, cancellationToken).ConfigureAwait(false)).IsAllowed)
             {
-                available.Add(tool.Tool);
+                available.Add(tool);
             }
         }
 
@@ -97,69 +77,87 @@ public class AgentToolInvoker : IAgentToolInvoker
     /// The filters run before the first item, so a caller that is refused receives nothing rather
     /// than a truncated result.
     /// </remarks>
-    public async IAsyncEnumerable<string> InvokeAsync(string name, string? argumentsJson, AgentToolContext context, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public async IAsyncEnumerable<string> InvokeAsync(
+        string name,
+        string? argumentsJson,
+        AgentToolContext context,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(context);
 
-        var tool = await this.ResolveAsync(name, context, cancellationToken).ConfigureAwait(false);
+        var function = await this.ResolveAsync(name, context, cancellationToken).ConfigureAwait(false);
 
-        await foreach (var item in tool.InvokeAsync(argumentsJson, context, cancellationToken).ConfigureAwait(false))
+        var arguments = AgentToolInvocation.Create(argumentsJson, context);
+
+        if (function is AgentTool streaming)
         {
-            yield return JsonSerializer.Serialize(item, tool.SerializerOptions);
+            await foreach (var item in streaming.InvokeStreamingAsync(arguments, cancellationToken).ConfigureAwait(false))
+            {
+                yield return Write(item, function);
+            }
+
+            yield break;
         }
+
+        // a function that is not one of ours returns one value, whatever its declaration says
+        yield return Write(await function.InvokeAsync(arguments, cancellationToken).ConfigureAwait(false), function);
     }
 
     /// <inheritdoc />
     /// <remarks>
     /// <para>
-    /// For a caller that cannot stream. A sequence tool's items are collected into an array, which
-    /// is what its output schema describes either way.
+    /// For a caller that cannot stream. A sequence tool's items are collected into an array,
+    /// which is what its output schema describes either way.
     /// </para>
     /// <para>
-    /// A failure part-way through a sequence fails the whole call, and the items already collected
-    /// are discarded. Handing a model a truncated result it has no way to recognize as truncated
-    /// is worse than handing it an error.
+    /// A failure part-way through a sequence fails the whole call, and the items already
+    /// collected are discarded. Handing a model a truncated result it has no way to recognise as
+    /// truncated is worse than handing it an error.
     /// </para>
     /// </remarks>
     public async Task<string> InvokeCompleteAsync(string name, string? argumentsJson, AgentToolContext context, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(context);
 
-        var tool = await this.ResolveAsync(name, context, cancellationToken).ConfigureAwait(false);
+        var function = await this.ResolveAsync(name, context, cancellationToken).ConfigureAwait(false);
 
-        if (tool.ResultKind == AgentToolResultKind.Whole)
-        {
-            var whole = await FirstOrDefaultAsync(tool, argumentsJson, context, cancellationToken).ConfigureAwait(false);
+        var arguments = AgentToolInvocation.Create(argumentsJson, context);
 
-            return JsonSerializer.Serialize(whole, tool.SerializerOptions);
-        }
-
-        var items = new List<object?>();
-
-        await foreach (var item in tool.InvokeAsync(argumentsJson, context, cancellationToken).ConfigureAwait(false))
-        {
-            items.Add(item);
-        }
-
-        return JsonSerializer.Serialize(items, tool.SerializerOptions);
+        return Write(await function.InvokeAsync(arguments, cancellationToken).ConfigureAwait(false), function);
     }
 
     /// <summary>
-    /// Finds the tool and puts it to the filters.
+    /// Writes one result the way its tool writes results.
+    /// </summary>
+    /// <param name="value">What the tool returned.</param>
+    /// <param name="function">The tool.</param>
+    /// <returns>The result as JSON.</returns>
+    private static string Write(object? value, AIFunction function) =>
+        JsonSerializer.Serialize(value, function.JsonSerializerOptions);
+
+    /// <summary>
+    /// Finds the tool, puts it to the filters, and insists it can be run here.
     /// </summary>
     /// <param name="name">The tool to find.</param>
     /// <param name="context">Who is asking.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A task containing the tool.</returns>
-    private async ValueTask<AgentTool> ResolveAsync(string name, AgentToolContext context, CancellationToken cancellationToken)
+    /// <returns>A task containing the function behind the tool.</returns>
+    private async ValueTask<AIFunction> ResolveAsync(
+        string name,
+        AgentToolContext context,
+        CancellationToken cancellationToken)
     {
-        var tool = await this.registry.RequireAsync(name, cancellationToken).ConfigureAwait(false);
+        var descriptor = await this.registry.RequireAsync(name, context, cancellationToken).ConfigureAwait(false);
 
-        var decision = await this.EvaluateAsync(tool, context, cancellationToken).ConfigureAwait(false);
+        var decision = await this.EvaluateAsync(descriptor, context, cancellationToken).ConfigureAwait(false);
 
-        return decision.IsAllowed
-            ? tool.Tool
-            : throw new AgentToolAccessDeniedException(decision.Reason!);
+        if (!decision.IsAllowed)
+        {
+            throw new AgentToolAccessDeniedException(decision.Reason!);
+        }
+
+        return descriptor.AsFunction()
+               ?? throw new AgentToolNotInvocableException($"The tool '{descriptor.Name}' is declared here but nothing here can run it.");
     }
 
     /// <summary>
@@ -170,8 +168,9 @@ public class AgentToolInvoker : IAgentToolInvoker
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task containing the decision.</returns>
     /// <remarks>
-    /// The first refusal wins, and the rest are not consulted. A caller learns one reason rather than
-    /// all of them, which is the right amount: the others may only apply because the first did.
+    /// The first refusal wins, and the rest are not consulted. A caller learns one reason rather
+    /// than all of them, which is the right amount: the others may only apply because the first
+    /// did.
     /// </remarks>
     private async ValueTask<AgentToolFilterDecision> EvaluateAsync(AgentToolDescriptor tool, AgentToolContext context, CancellationToken cancellationToken)
     {
@@ -186,23 +185,5 @@ public class AgentToolInvoker : IAgentToolInvoker
         }
 
         return AgentToolFilterDecision.Allow();
-    }
-
-    /// <summary>
-    /// Reads the one result of a tool that returns its result whole.
-    /// </summary>
-    /// <param name="tool">The tool to run.</param>
-    /// <param name="argumentsJson">The arguments as JSON.</param>
-    /// <param name="context">Who is asking.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A task containing the result.</returns>
-    private static async Task<object?> FirstOrDefaultAsync(AgentTool tool, string? argumentsJson, AgentToolContext context, CancellationToken cancellationToken)
-    {
-        await foreach (var item in tool.InvokeAsync(argumentsJson, context, cancellationToken).ConfigureAwait(false))
-        {
-            return item;
-        }
-
-        return null;
     }
 }

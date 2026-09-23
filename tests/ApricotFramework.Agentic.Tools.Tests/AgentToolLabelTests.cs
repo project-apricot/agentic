@@ -14,7 +14,7 @@ public class AgentToolLabelTests
 
     [AgentToolLabel("tier", "standard")]
     [AgentToolLabel("sensitivity", Sensitivity.Public)]
-    private abstract class LabelledBase : AgentTool<AgentToolNoArguments, string>
+    private abstract class LabelledBase : ProbeTool<ProbeNoArguments, string>
     {
         public override string Title => "Probe";
 
@@ -25,7 +25,7 @@ public class AgentToolLabelTests
         public override bool IsDestructive => false;
 
 
-        protected override Task<string> ExecuteAsync(AgentToolNoArguments arguments, AgentToolContext context, CancellationToken cancellationToken) => Task.FromResult("ok");
+        protected override Task<string> ExecuteAsync(ProbeNoArguments arguments, AgentToolContext context, CancellationToken cancellationToken) => Task.FromResult("ok");
     }
 
     [AgentToolLabel("sensitivity", Sensitivity.Personal)]
@@ -102,5 +102,59 @@ public class AgentToolLabelTests
         var tool = new ConstructedProbe(new Dictionary<string, object?> { ["experimental"] = null });
 
         Assert.True(tool.HasLabel("experimental"));
+    }
+
+    [Fact]
+    public async Task TypedLabel_DerivedFromTheLabelAttribute_IsReadAsALabel()
+    {
+        // a host closing its vocabulary at the declaration site: no label name spelled out, no
+        // value that is not one of the enum's
+        var tools = await TypedTools();
+
+        var family = tools.Single(tool => tool.Name == "probe_typed_family");
+
+        Assert.True(family.Declaration.TryGetLabel<Confidentiality>(TypedLabelNames.Confidentiality, out var level));
+        Assert.Equal(Confidentiality.Public, level);
+    }
+
+    [Fact]
+    public async Task TypedLabel_OnAMethod_NarrowsItsFamily()
+    {
+        var tools = await TypedTools();
+
+        var narrowed = tools.Single(tool => tool.Name == "probe_typed_narrowed");
+
+        Assert.True(narrowed.Declaration.TryGetLabel<Confidentiality>(TypedLabelNames.Confidentiality, out var level));
+        Assert.Equal(Confidentiality.Personal, level);
+    }
+
+    [Fact]
+    public async Task TypedLabel_ReadAsMetadata_AccumulatesRatherThanOverriding()
+    {
+        // the difference worth knowing: labels override by name, metadata accumulates in the
+        // order it was said - the holding class first, the method after. A host reading a typed
+        // label out of the metadata has to take the last, which is why reading it as a label is
+        // the better habit
+        var tools = await TypedTools();
+
+        var declared = tools.Single(tool => tool.Name == "probe_typed_narrowed").GetMetadata<ConfidentialityAttribute>();
+
+        Assert.Equal([Confidentiality.Public, Confidentiality.Personal], declared.Select(attribute => attribute.Level));
+    }
+
+    /// <summary>Composes the tools carrying a typed label.</summary>
+    /// <returns>A task containing the tools.</returns>
+    private static async Task<IReadOnlyList<AgentToolDescriptor>> TypedTools()
+    {
+        var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+
+        services.AddAgentToolsCore();
+        services.AddAgentToolType<TypedLabelProbes>();
+
+        var host = Microsoft.Extensions.DependencyInjection.ServiceCollectionContainerBuilderExtensions.BuildServiceProvider(services);
+
+        return await Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions
+            .GetRequiredService<IAgentToolRegistry>(host)
+            .GetToolsAsync(new AgentToolContext { Services = host }, TestContext.Current.CancellationToken);
     }
 }

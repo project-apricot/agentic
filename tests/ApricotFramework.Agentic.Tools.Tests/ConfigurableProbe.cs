@@ -11,7 +11,7 @@ public sealed class ConfigurableProbe(
     string title = "Probe",
     string description = "Does a thing.",
     bool readOnly = true,
-    bool destructive = false) : AgentTool<AgentToolNoArguments, string>
+    bool destructive = false) : ProbeTool<ProbeNoArguments, string>
 {
     /// <inheritdoc />
     public override string Name => name;
@@ -30,7 +30,7 @@ public sealed class ConfigurableProbe(
 
 
     /// <inheritdoc />
-    protected override Task<string> ExecuteAsync(AgentToolNoArguments arguments, AgentToolContext context, CancellationToken cancellationToken)
+    protected override Task<string> ExecuteAsync(ProbeNoArguments arguments, AgentToolContext context, CancellationToken cancellationToken)
     {
         return Task.FromResult("ok");
     }

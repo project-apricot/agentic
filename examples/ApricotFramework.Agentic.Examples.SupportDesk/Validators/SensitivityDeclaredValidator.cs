@@ -24,7 +24,7 @@ public sealed class SensitivityDeclaredValidator : IAgentToolValidator
     {
         ArgumentNullException.ThrowIfNull(tool);
 
-        if (!tool.Tool.TryGetLabel<Sensitivity>(SupportDeskLabels.Sensitivity, out var sensitivity))
+        if (!tool.Declaration.TryGetLabel<Sensitivity>(SupportDeskLabels.Sensitivity, out var sensitivity))
         {
             throw new AgentToolDeclarationException(
                 $"The tool '{tool.Name}' declares no '{SupportDeskLabels.Sensitivity}' label. " +

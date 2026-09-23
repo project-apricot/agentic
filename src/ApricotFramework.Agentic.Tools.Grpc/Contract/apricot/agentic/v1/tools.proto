@@ -1,0 +1,86 @@
+syntax = "proto3";
+
+package apricot.agentic.v1;
+
+option csharp_namespace = "ApricotFramework.Agentic.Tools.Grpc.Contract";
+
+// The AI tools a service owns, and the means to invoke one.
+//
+// Deliberately domain neutral. Every service with an agent lane implements this same contract,
+// so a consumer that federates several of them - an MCP server, an agent loop - needs one client
+// rather than one per domain.
+service AgentTools {
+
+  // What this caller is offered. Filtered by whatever the serving host gates its tools on, so a
+  // tool listed here is one the call would accept.
+  rpc ListTools (ListToolsRequest) returns (ListToolsResponse);
+
+  // Runs a tool and returns its complete result.
+  rpc InvokeTool (InvokeToolRequest) returns (InvokeToolResponse);
+
+  // Runs a tool and returns its result as it arrives. A tool whose result is whole sends one
+  // message; a consumer that cannot stream should call InvokeTool instead and let the serving
+  // host assemble.
+  rpc InvokeToolStream (InvokeToolRequest) returns (stream InvokeToolChunk);
+}
+
+// How a tool's result arrives.
+enum AgentToolResultKind {
+  AGENT_TOOL_RESULT_KIND_UNSPECIFIED = 0;
+
+  // One value.
+  AGENT_TOOL_RESULT_KIND_WHOLE = 1;
+
+  // A sequence of items which together form the result.
+  AGENT_TOOL_RESULT_KIND_SEQUENCE = 2;
+}
+
+// Everything a consumer needs to advertise a tool and decide whether to offer it.
+message AgentToolDeclaration {
+  string name = 1;
+  string title = 2;
+  string description = 3;
+
+  // json schema, as text rather than a struct: google.protobuf.Struct carries every number as a
+  // double, which silently truncates an int64 identifier - and a schema is read, not computed on
+  string input_schema = 4;
+
+  // empty where the tool describes no result
+  string output_schema = 5;
+
+  // what a consumer's own policy matches on. stated rather than left to be inferred: a consumer
+  // that has to guess whether a tool destroys something will guess wrong at least once
+  bool read_only = 6;
+  bool destructive = 7;
+  bool idempotent = 8;
+  bool open_world = 9;
+
+  AgentToolResultKind result_kind = 10;
+
+  // whatever vocabulary the serving host keeps. nothing in this contract interprets them
+  map<string, string> labels = 11;
+}
+
+message ListToolsRequest {
+}
+
+message ListToolsResponse {
+  repeated AgentToolDeclaration tools = 1;
+}
+
+message InvokeToolRequest {
+  string name = 1;
+
+  // the arguments as json, shaped by the declaration's input schema. empty stands for none
+  string arguments_json = 2;
+}
+
+message InvokeToolResponse {
+  // the complete result as json, shaped by the declaration's output schema
+  string result_json = 1;
+}
+
+message InvokeToolChunk {
+  // one item of the result as json
+  string item_json = 1;
+}

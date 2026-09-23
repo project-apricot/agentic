@@ -1,7 +1,5 @@
 using System.ComponentModel;
 using ApricotFramework.Agentic.Tools;
-using ApricotFramework.Agentic.Tools.Adapters;
-using ApricotFramework.Agentic.Tools.Options;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.AI;
 
@@ -34,7 +32,7 @@ namespace ApricotFramework.Agentic.Examples.SupportDesk.Foreign;
 public sealed class KnowledgeBaseToolSource : IAgentToolSource
 {
     /// <inheritdoc />
-    public ValueTask<IReadOnlyList<AgentToolDescriptor>> GetToolsAsync(CancellationToken cancellationToken = default)
+    public ValueTask<IReadOnlyList<AgentToolDescriptor>> GetToolsAsync(IAgentToolSourceContext context, CancellationToken cancellationToken = default)
     {
         // what the foreign server chose to call things, which is not our business to like
         IReadOnlyList<AgentToolDescriptor> tools =
@@ -70,28 +68,38 @@ public sealed class KnowledgeBaseToolSource : IAgentToolSource
     /// <param name="isDestructive">Whether calling it destroys anything.</param>
     /// <returns>The tool.</returns>
     /// <remarks>
-    /// The options are where a host takes responsibility for a declaration it inherited. The
-    /// behaviour flags are required, and the surface label is added here, because a foreign server
-    /// has no way to know which surfaces exist here and may say nothing about whether its tools
-    /// destroy anything.
+    /// <para>
+    /// The declaration is where a host takes responsibility for something it inherited. The
+    /// behaviour flags are required, and the surface label is added here, because a foreign
+    /// server has no way to know which surfaces exist here and may say nothing about whether its
+    /// tools destroy anything.
+    /// </para>
+    /// <para>
+    /// Nothing wraps the function. It goes into the descriptor as it arrived, so a consumer
+    /// reaching through it for what it really is still finds it - which matters most for a tool
+    /// read off a live MCP client, where the thing behind it is an <c>McpClientTool</c>.
+    /// </para>
     /// </remarks>
     private static AgentToolDescriptor Adapt(AIFunction function, bool isDestructive) =>
-        new(AgentTool.Create(function, new AgentToolCreateOptions
-        {
-            // renamed into a space of our own, so a foreign "search" cannot shadow one of ours
-            Name = $"support_kb_{function.Name}",
-            IsReadOnly = !isDestructive,
-            IsDestructive = isDestructive,
-            IsOpenWorld = true,
-            Labels = new Dictionary<string, object?>
+        new(
+            function,
+            new AgentToolDeclaration
             {
-                [SupportDeskLabels.Sensitivity] = Sensitivity.Public,
-                [SupportDeskLabels.Area] = "knowledge-base",
-                [SupportDeskLabels.Surfaces] = SupportDeskSurfaces.Both,
-                ["origin"] = "knowledge-base-co"
-            }
-        }),
-        // nothing a foreign server hands over carries an authorization attribute, so whatever
-        // should gate it is attached here - the same thing RequireAuthorization would have added
-        [new AuthorizeAttribute(SupportDeskPolicies.TicketsRead)]);
+                // offered in a space of our own, so a foreign "search" cannot shadow one of ours
+                Name = $"support_kb_{function.Name}",
+                Description = function.Description,
+                IsReadOnly = !isDestructive,
+                IsDestructive = isDestructive,
+                IsOpenWorld = true,
+                Labels = new Dictionary<string, object?>
+                {
+                    [SupportDeskLabels.Sensitivity] = Sensitivity.Public,
+                    [SupportDeskLabels.Area] = "knowledge-base",
+                    [SupportDeskLabels.Surfaces] = SupportDeskSurfaces.Both,
+                    ["origin"] = "knowledge-base-co"
+                }
+            },
+            // nothing a foreign server hands over carries an authorization attribute, so whatever
+            // should gate it is attached here - the same thing RequireAuthorization would add
+            [new AuthorizeAttribute(SupportDeskPolicies.TicketsRead)]);
 }

@@ -15,7 +15,7 @@ public class AgentToolInvokerTests
     private static AgentToolInvoker Invoker(params IAgentToolFilter[] filters) =>
         new(new AgentToolRegistry([StaticAgentToolSource.For(new SingleProbe(), new SequenceProbe(), new FailingSequenceProbe())]), filters);
 
-    private static AgentToolContext Caller() => new();
+    private static AgentToolContext Caller() => Probes.Context();
 
     [Fact]
     public async Task InvokeCompleteAsync_WholeResultTool_ReturnsTheObject()
@@ -91,7 +91,7 @@ public class AgentToolInvokerTests
     {
         var filter = new CaptureContext();
 
-        var context = new AgentToolContext();
+        var context = Probes.Context();
         context.Items["tenant"] = "acme";
 
         await Invoker(filter).InvokeCompleteAsync("probe_items_get", """{"id":1}""", context, TestContext.Current.CancellationToken);
@@ -106,7 +106,7 @@ public class AgentToolInvokerTests
         var filter = new CaptureContext();
 
         await Invoker(filter).InvokeCompleteAsync(
-            "probe_items_get", """{"id":1}""", new TenantContext { Tenant = "acme" }, TestContext.Current.CancellationToken);
+            "probe_items_get", """{"id":1}""", new TenantContext { Services = Probes.Services, Tenant = "acme" }, TestContext.Current.CancellationToken);
 
         Assert.Equal("acme", Assert.IsType<TenantContext>(filter.Seen).Tenant);
     }

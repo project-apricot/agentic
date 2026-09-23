@@ -1,7 +1,7 @@
 namespace ApricotFramework.Agentic.Tools.Tests;
 
 /// <summary>A single-result tool.</summary>
-public sealed class SingleProbe : AgentTool<ProbeArguments, ProbeResult>
+public sealed class SingleProbe : ProbeTool<ProbeArguments, ProbeResult>
 {
     /// <inheritdoc />
     public override string Name => "probe_items_get";

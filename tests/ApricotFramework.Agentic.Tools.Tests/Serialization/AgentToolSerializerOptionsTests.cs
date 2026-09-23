@@ -23,7 +23,7 @@ public class AgentToolSerializerOptionsTests
         [property: Description("The address published for contact.")] string PublicEmail,
         [property: Description("The name shown.")] string DisplayName);
 
-    private sealed class SnakeCaseProbe : AgentTool<AgentToolNoArguments, Contact>
+    private sealed class SnakeCaseProbe : ProbeTool<ProbeNoArguments, Contact>
     {
         public override string Name => "probe_contacts_snake";
 
@@ -36,9 +36,9 @@ public class AgentToolSerializerOptionsTests
         public override bool IsDestructive => false;
 
 
-        public override JsonSerializerOptions SerializerOptions => SnakeCase;
+        public override JsonSerializerOptions JsonSerializerOptions => SnakeCase;
 
-        protected override Task<Contact> ExecuteAsync(AgentToolNoArguments arguments, AgentToolContext context, CancellationToken cancellationToken)
+        protected override Task<Contact> ExecuteAsync(ProbeNoArguments arguments, AgentToolContext context, CancellationToken cancellationToken)
             => Task.FromResult(new Contact("ada@example.org", "Ada"));
     }
 
@@ -51,7 +51,7 @@ public class AgentToolSerializerOptionsTests
     [Fact]
     public void OutputSchema_FollowsTheToolsOwnOptions()
     {
-        var properties = new SnakeCaseProbe().OutputSchema!.Value.GetProperty("properties");
+        var properties = new SnakeCaseProbe().ReturnJsonSchema!.Value.GetProperty("properties");
 
         Assert.True(properties.TryGetProperty("public_email", out _));
         Assert.False(properties.TryGetProperty("publicEmail", out _));
@@ -76,11 +76,11 @@ public class AgentToolSerializerOptionsTests
             null);
 
         var json = await invoker.InvokeCompleteAsync(
-            "probe_contacts_snake", null, new AgentToolContext(), TestContext.Current.CancellationToken);
+            "probe_contacts_snake", null, Probes.Context(), TestContext.Current.CancellationToken);
 
         using var document = JsonDocument.Parse(json);
 
-        var properties = new SnakeCaseProbe().OutputSchema!.Value.GetProperty("properties");
+        var properties = new SnakeCaseProbe().ReturnJsonSchema!.Value.GetProperty("properties");
 
         foreach (var property in document.RootElement.EnumerateObject())
         {

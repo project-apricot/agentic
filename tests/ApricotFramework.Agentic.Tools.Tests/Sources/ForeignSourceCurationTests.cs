@@ -23,7 +23,7 @@ public class ForeignSourceCurationTests
     {
         // the behaviour worth knowing before reaching for a curator
         await Assert.ThrowsAsync<AgentToolDeclarationException>(
-            async () => await Registry(Foreign()).GetToolsAsync(TestContext.Current.CancellationToken));
+            async () => await Registry(Foreign()).GetToolsAsync(Probes.Context(), TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -35,7 +35,7 @@ public class ForeignSourceCurationTests
             Foreign(),
             AgentToolCuration.DropRejected(Checks, (tool, _) => dropped.Add(tool.Name)));
 
-        var tools = await Registry(source).GetToolsAsync(TestContext.Current.CancellationToken);
+        var tools = await Registry(source).GetToolsAsync(Probes.Context(), TestContext.Current.CancellationToken);
 
         Assert.Equal("search", Assert.Single(tools).Name);
         Assert.Equal(["broken"], dropped);
@@ -50,7 +50,7 @@ public class ForeignSourceCurationTests
             Foreign(),
             AgentToolCuration.DropRejected(Checks, (_, exception) => reason = exception));
 
-        await Registry(source).GetToolsAsync(TestContext.Current.CancellationToken);
+        await Registry(source).GetToolsAsync(Probes.Context(), TestContext.Current.CancellationToken);
 
         Assert.Contains("description", reason!.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -66,7 +66,7 @@ public class ForeignSourceCurationTests
             ],
             Checks);
 
-        var tools = await registry.GetToolsAsync(TestContext.Current.CancellationToken);
+        var tools = await registry.GetToolsAsync(Probes.Context(), TestContext.Current.CancellationToken);
 
         Assert.Equal(["docs_search", "weather_search"], tools.Select(tool => tool.Name).Order(StringComparer.Ordinal));
     }
@@ -84,7 +84,7 @@ public class ForeignSourceCurationTests
             Checks);
 
         await Assert.ThrowsAsync<AgentToolDeclarationException>(
-            async () => await registry.GetToolsAsync(TestContext.Current.CancellationToken));
+            async () => await registry.GetToolsAsync(Probes.Context(), TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -94,7 +94,7 @@ public class ForeignSourceCurationTests
             StaticAgentToolSource.For(new ConfigurableProbe("search"), new ConfigurableProbe("delete_everything")),
             AgentToolCuration.Where(tool => tool.Name == "search"));
 
-        Assert.Equal("search", Assert.Single(await Registry(source).GetToolsAsync(TestContext.Current.CancellationToken)).Name);
+        Assert.Equal("search", Assert.Single(await Registry(source).GetToolsAsync(Probes.Context(), TestContext.Current.CancellationToken)).Name);
     }
 
     [Fact]
@@ -106,7 +106,7 @@ public class ForeignSourceCurationTests
 
         var source = new CuratingAgentToolSource(Foreign(), AgentToolCuration.Adding(marker));
 
-        var tools = await source.GetToolsAsync(TestContext.Current.CancellationToken);
+        var tools = await source.GetToolsAsync(Probes.Context(), TestContext.Current.CancellationToken);
 
         Assert.All(tools, tool => Assert.Contains(marker, tool.Metadata));
     }
@@ -121,7 +121,7 @@ public class ForeignSourceCurationTests
             new CuratingAgentToolSource(Foreign(), AgentToolCuration.Prefixing("weather_")),
             AgentToolCuration.DropRejected(Checks, (tool, _) => dropped.Add(tool.Name)));
 
-        var tools = await Registry(source).GetToolsAsync(TestContext.Current.CancellationToken);
+        var tools = await Registry(source).GetToolsAsync(Probes.Context(), TestContext.Current.CancellationToken);
 
         Assert.Equal("weather_search", Assert.Single(tools).Name);
         Assert.Equal(["weather_broken"], dropped);
@@ -134,10 +134,11 @@ public class ForeignSourceCurationTests
             StaticAgentToolSource.For(new ConfigurableProbe("search", title: "Search the web")),
             AgentToolCuration.Prefixing("weather_"));
 
-        var tool = Assert.Single(await Registry(source).GetToolsAsync(TestContext.Current.CancellationToken));
+        var tool = Assert.Single(await Registry(source).GetToolsAsync(Probes.Context(), TestContext.Current.CancellationToken));
 
         Assert.Equal("weather_search", tool.Name);
-        Assert.Equal("Search the web", tool.Tool.Title);
+        // the title is a label a person reads and stays what the tool called itself
+        Assert.Equal("Search the web", tool.Declaration.Title);
     }
 
     [Fact]
@@ -146,11 +147,11 @@ public class ForeignSourceCurationTests
         // the other half: a tool that would be refused, offered on terms the host sets
         var source = new CuratingAgentToolSource(
             StaticAgentToolSource.For(new ConfigurableProbe("broken", description: "  ")),
-            tool => new AgentToolDescriptor(new Described(tool.Tool, "Searches a third party index."), tool.Metadata));
+            tool => tool.With(AgentToolDeclaration.From(tool.Declaration) with { Description = "Searches a third party index." }));
 
-        var tool = Assert.Single(await Registry(source).GetToolsAsync(TestContext.Current.CancellationToken));
+        var tool = Assert.Single(await Registry(source).GetToolsAsync(Probes.Context(), TestContext.Current.CancellationToken));
 
-        Assert.Equal("Searches a third party index.", tool.Tool.Description);
+        Assert.Equal("Searches a third party index.", tool.Declaration.Description);
     }
 
     [Fact]
@@ -158,21 +159,13 @@ public class ForeignSourceCurationTests
     {
         var source = new CuratingAgentToolSource(
             StaticAgentToolSource.For(new ConfigurableProbe("broken", description: "  ")),
-            tool => new AgentToolDescriptor(new Described(tool.Tool, "Searches."), tool.Metadata));
+            tool => tool.With(AgentToolDeclaration.From(tool.Declaration) with { Description = "Searches." }));
 
         var invoker = new AgentToolInvoker(Registry(source));
 
-        var result = await invoker.InvokeCompleteAsync("broken", null, new AgentToolContext(), TestContext.Current.CancellationToken);
+        var result = await invoker.InvokeCompleteAsync("broken", null, Probes.Context(), TestContext.Current.CancellationToken);
 
         Assert.Equal("\"ok\"", result);
     }
 
-    /// <summary>A tool offered with prose the host supplies.</summary>
-    /// <param name="inner">The tool to offer.</param>
-    /// <param name="description">The prose to offer it with.</param>
-    private sealed class Described(AgentTool inner, string description) : DelegatingAgentTool(inner)
-    {
-        /// <inheritdoc />
-        public override string Description { get; } = description;
-    }
 }

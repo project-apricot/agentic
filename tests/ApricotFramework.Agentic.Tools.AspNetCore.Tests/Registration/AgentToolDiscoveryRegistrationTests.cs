@@ -21,16 +21,19 @@ public class AgentToolDiscoveryRegistrationTests
         services.AddLogging();
         services.AddAuthorizationBuilder().AddPolicy("tools.use", policy => policy.RequireClaim("scope", "tools.use"));
         services.AddSingleton<IAuthorizationHandler>(new ProbeHandler("granted", "inherited"));
-        services.AddAgentTools();
-        services.AddAgentToolAuthorization();
+        services.AddAgentToolsCore().WithAuthorization();
 
         return services;
     }
 
-    private static async Task<IReadOnlyList<AgentToolDescriptor>> Compose(ServiceCollection services) =>
-        await services.BuildServiceProvider()
+    private static async Task<IReadOnlyList<AgentToolDescriptor>> Compose(ServiceCollection services)
+    {
+        var host = services.BuildServiceProvider();
+
+        return await host
             .GetRequiredService<IAgentToolRegistry>()
-            .GetToolsAsync(TestContext.Current.CancellationToken);
+            .GetToolsAsync(Probes.Context(host), TestContext.Current.CancellationToken);
+    }
 
     [Fact]
     public async Task AddAgentToolsFromAssembly_RegistersWhatItFinds()
@@ -81,7 +84,7 @@ public class AgentToolDiscoveryRegistrationTests
     {
         var services = Host();
 
-        services.AddAgentTool<PolicyProbe>().RequireAuthorization(new ProbeRequirement("not-granted"));
+        services.AddAgentTool<PolicyProbe>(tool => tool.RequireAuthorization(new ProbeRequirement("not-granted")));
 
         var host = services.BuildServiceProvider();
 
@@ -89,12 +92,11 @@ public class AgentToolDiscoveryRegistrationTests
             () => host.GetRequiredService<IAgentToolInvoker>().InvokeCompleteAsync(
                 "probe_items_policy",
                 null,
-                new AgentToolContext
-                {
-                    User = new System.Security.Claims.ClaimsPrincipal(
+                Probes.Context(
+                    host,
+                    new System.Security.Claims.ClaimsPrincipal(
                         new System.Security.Claims.ClaimsIdentity(
-                            [new System.Security.Claims.Claim("scope", "tools.use")], "test"))
-                },
+                            [new System.Security.Claims.Claim("scope", "tools.use")], "test"))),
                 TestContext.Current.CancellationToken));
     }
 
@@ -130,7 +132,7 @@ public class AgentToolDiscoveryRegistrationTests
 
         var host = services.BuildServiceProvider();
 
-        var tool = await host.GetRequiredService<IAgentToolRegistry>().RequireAsync("probe_items_gated", TestContext.Current.CancellationToken);
+        var tool = await host.GetRequiredService<IAgentToolRegistry>().RequireAsync("probe_items_gated", Probes.Context(host), TestContext.Current.CancellationToken);
 
         var names = AgentToolAuthorizationMetadata.For(tool).DeclaredRequirements.OfType<ProbeRequirement>().Select(requirement => requirement.Name);
 

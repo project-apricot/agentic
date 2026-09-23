@@ -1,6 +1,6 @@
 ---
 title: Agentic
-description: Declare AI tools once, beside the code that runs them, and surface them to any agent surface.
+description: Declare an AI tool once, beside the code that runs it, and surface it to any agent surface.
 ---
 
 # Agentic
@@ -13,35 +13,65 @@ from the thing it describes.
 What does *not* belong there is how the tool is reached, or what a caller must hold to reach it.
 Those are the host's, and this library is built so it never has to learn either.
 
+## A tool is an AIFunction
+
+Not something adapted into one. `AgentTool` derives from
+`Microsoft.Extensions.AI.AIFunction`, which is the currency the whole .NET AI ecosystem already
+speaks — so the same declaration reaches every surface with nothing in between:
+
+| Surface | What it takes |
+| --- | --- |
+| An in-process agent loop | `ChatOptions.Tools.AddRange(await executor.GetAvailableFunctionsAsync())` |
+| An MCP server | `McpServerTool.Create(function, options)` |
+| A tool read off an **upstream** MCP server | nothing — `McpClientTool` is already an `AIFunction` |
+| Another service, over gRPC | a declaration off the wire and a client to call back with |
+
+That last row is the point of the exercise. Tools arrive from four directions and leave through
+four, and a registry holds them all without knowing which is which.
+
 ## Packages
+
+Nothing implies anything else. A library that only *declares* tools takes the first; a console
+application federating MCP servers takes the second and fourth, and no web framework comes with
+them.
 
 | Package | What it is |
 | --- | --- |
-| `ApricotFramework.Agentic.Tools` | The tool abstraction, schema generation, the registry and the invoker |
-| `ApricotFramework.Agentic.Tools.AspNetCore` | Registration, and authorization read from the attributes a tool declares |
+| `ApricotFramework.Agentic.Tools.Abstractions` | What a tool is: the base classes, the declaration, the descriptor, schema generation |
+| `ApricotFramework.Agentic.Tools` | What composes and runs them: the registry, the executor, sources, filters, validators, registration |
+| `ApricotFramework.Agentic.Tools.AspNetCore` | Authorization from the attributes a tool declares, and a caller taken from the request |
+| `ApricotFramework.Agentic.Tools.Mcp.Client` | Tools from upstream MCP servers |
+| `ApricotFramework.Agentic.Tools.Mcp.Server` | This host's tools, over MCP |
+| `ApricotFramework.Agentic.Tools.Grpc` | The `apricot.agentic.v1` contract — messages only |
+| `ApricotFramework.Agentic.Tools.Grpc.Server` | This host's tools, over gRPC |
+| `ApricotFramework.Agentic.Tools.Grpc.Client` | Tools from another service, over gRPC |
 
-## Two things it refuses to know
+## Three things it refuses to know
 
-**How a tool is reached.** Being local or remote is a property of the caller. An in-process agent
-loop and a remote protocol such as MCP are two callers of one declaration, so nothing in the tool
-mentions either. A host that wants tools over gRPC, HTTP or a message queue writes that transport
-once and every tool is reachable through it.
+**How a tool is reached.** Being local or remote is a property of the caller. Nothing in a
+declaration mentions a transport, which is what lets one tool serve an agent loop and an MCP
+session at once — and what lets a tool that is really a call to another service sit in the
+registry beside one written here.
 
 **What a permission is.** Where permissions live, how they are named, and what decides them are
 answered by the application already. `IAgentToolFilter` is the whole of what this library knows
-about the subject — one method, answering allow or deny — and the ASP.NET Core package implements
-one by reading the authorization attributes a tool declares and handing them to the host's own
-pipeline.
+about the subject, and the ASP.NET Core package implements one by reading the authorization
+attributes a tool declares and handing them to the host's own pipeline.
+
+**Who the caller is.** A host answers that once, in an `IAgentToolContextFactory`, and every
+surface goes through it. No endpoint, MCP handler or gRPC method builds a caller of its own.
 
 ## Install
 
 ```bash
 dotnet add package ApricotFramework.Agentic.Tools
-dotnet add package ApricotFramework.Agentic.Tools.AspNetCore
 ```
+
+and whichever surfaces this host actually has.
 
 ## Status
 
-Preview. The shape is still moving and breaking changes should be expected until 1.0. Two have
-already happened in design: authorization moved from a property on the tool to an attribute, and
-results moved from a single value to a sequence. Both would have been major bumps.
+Preview. The shape is still moving and breaking changes should be expected until 1.0. Three have
+already happened in design: authorization moved from a property on the tool to an attribute,
+results moved from a single value to a sequence, and a tool became an `AIFunction` with its
+agentic properties moved onto the descriptor beside it.

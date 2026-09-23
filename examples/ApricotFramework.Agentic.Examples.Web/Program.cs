@@ -4,6 +4,7 @@ using ApricotFramework.Agentic.Examples.Web;
 using ApricotFramework.Agentic.Examples.Web.Auth;
 using ApricotFramework.Agentic.Tools;
 using ApricotFramework.Agentic.Tools.Exceptions;
+using ApricotFramework.Agentic.Tools.Extensions;
 using Microsoft.AspNetCore.Authentication;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -19,30 +20,36 @@ builder.Services.AddAuthorizationBuilder()
     .AddPolicy(SupportDeskPolicies.TicketsAdmin, policy => policy.RequireClaim("scope", SupportDeskPolicies.TicketsAdmin))
     .AddPolicy(SupportDeskPolicies.CustomersRead, policy => policy.RequireClaim("scope", SupportDeskPolicies.CustomersRead));
 
-builder.Services.AddSupportDeskAgentTools();
+builder.Services.AddHttpContextAccessor();
+
+// the tool library composes the machinery and hands back the builder; the host says who is
+// asking, because only the host knows. the surface is this application's own idea, so the
+// library carries nothing for it and this is where it is read
+builder.Services.AddSupportDeskAgentTools()
+    .WithContext<SupportDeskAgentToolContextFactory>();
 
 var app = builder.Build();
 
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Composing the registry here rather than on the first request, so a malformed declaration stops
-// the host instead of surfacing to whoever happens to ask first.
-await app.Services.GetRequiredService<IAgentToolRegistry>().GetToolsAsync();
+// Nothing composes the registry here any more: a malformed declaration of ours already stopped
+// the host, in the hosted service AddAgentTools registers. The registry itself composes per call,
+// because a source reaching an upstream server can answer differently for a different caller.
 
 // What this surface advertises. Filtered by the same authorizer that would gate the call, so
 // nothing listed here then refuses the caller - try it with no headers, and it comes back empty.
-app.MapGet("/tools", async (IAgentToolInvoker invoker, HttpContext http, string? surface, CancellationToken cancellationToken) =>
+app.MapGet("/tools", async (IAgentToolExecutor executor, CancellationToken cancellationToken) =>
 {
-    var tools = await invoker.GetAvailableToolsAsync(ToolCalls.Caller(http, surface), cancellationToken);
+    var tools = await executor.GetAvailableToolsAsync(cancellationToken);
 
-    return Results.Ok(tools.Select(ToolCalls.Describe));
+    return Results.Ok(tools.Select(tool => ToolCalls.Describe(tool)));
 });
 
 // One declaration in full, schemas included, for whoever is writing the arguments.
-app.MapGet("/tools/{name}", async (IAgentToolInvoker invoker, HttpContext http, string name, string? surface, CancellationToken cancellationToken) =>
+app.MapGet("/tools/{name}", async (IAgentToolExecutor executor, string name, CancellationToken cancellationToken) =>
 {
-    var tools = await invoker.GetAvailableToolsAsync(ToolCalls.Caller(http, surface), cancellationToken);
+    var tools = await executor.GetAvailableToolsAsync(cancellationToken);
 
     var tool = tools.FirstOrDefault(entry => entry.Name == name);
 
@@ -53,13 +60,13 @@ app.MapGet("/tools/{name}", async (IAgentToolInvoker invoker, HttpContext http, 
 
 // Invoke and report the complete result. What an MCP tools/call maps onto, since the protocol
 // returns one result per call.
-app.MapPost("/tools/{name}", async (IAgentToolInvoker invoker, HttpContext http, string name, string? surface, CancellationToken cancellationToken) =>
+app.MapPost("/tools/{name}", async (IAgentToolExecutor executor, HttpContext http, string name, CancellationToken cancellationToken) =>
 {
     var argumentsJson = await ToolCalls.ReadArgumentsAsync(http, cancellationToken);
 
     try
     {
-        var result = await invoker.InvokeCompleteAsync(name, argumentsJson, ToolCalls.Caller(http, surface), cancellationToken);
+        var result = await executor.InvokeCompleteAsync(name, argumentsJson, cancellationToken);
 
         return Results.Text(result, "application/json");
     }
@@ -71,7 +78,7 @@ app.MapPost("/tools/{name}", async (IAgentToolInvoker invoker, HttpContext http,
 
 // Invoke and report each item as it arrives, one JSON object per line. What an internal agent
 // loop would read, and what a sequence tool is for.
-app.MapPost("/tools/{name}/stream", async (IAgentToolInvoker invoker, HttpContext http, string name, string? surface, CancellationToken cancellationToken) =>
+app.MapPost("/tools/{name}/stream", async (IAgentToolExecutor executor, HttpContext http, string name, CancellationToken cancellationToken) =>
 {
     var argumentsJson = await ToolCalls.ReadArgumentsAsync(http, cancellationToken);
 
@@ -79,7 +86,7 @@ app.MapPost("/tools/{name}/stream", async (IAgentToolInvoker invoker, HttpContex
 
     try
     {
-        await foreach (var chunk in invoker.InvokeAsync(name, argumentsJson, ToolCalls.Caller(http, surface), cancellationToken))
+        await foreach (var chunk in executor.InvokeAsync(name, argumentsJson, cancellationToken))
         {
             // one object per line, so the newline is the framing
             await http.Response.WriteAsync(ToolCalls.OneLine(chunk) + '\n', cancellationToken);

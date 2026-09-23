@@ -1,21 +1,14 @@
 namespace ApricotFramework.Agentic.Tools.Invocation;
 
 /// <summary>
-/// An optional base for an <see cref="IAgentToolInvoker"/> that passes calls through to another.
+/// An invoker that passes everything through, so a wrapper says only what it changes.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Recommended as the base for anything chained around an invoker. Every member delegates, so a
-/// wrapper overrides only what it changes and keeps working when the interface grows.
-/// </para>
-/// <para>
-/// Note that <see cref="InvokeAsync"/> and <see cref="InvokeCompleteAsync"/> are separate calls
-/// rather than one expressed in terms of the other. A wrapper that overrode only the streaming
-/// one would miss every caller that cannot stream, so both are worth overriding when the point is
-/// to see every invocation.
-/// </para>
+/// Where things that need to know the caller go: an audit record, a span carrying the user, a
+/// per-person budget. Things that are about the surface rather than the caller wrap
+/// <see cref="IAgentToolExecutor"/> instead.
 /// </remarks>
-/// <param name="inner">The invoker to pass calls to.</param>
+/// <param name="inner">The invoker calls are passed to.</param>
 public abstract class DelegatingAgentToolInvoker(IAgentToolInvoker inner) : IAgentToolInvoker
 {
     /// <summary>
@@ -24,20 +17,14 @@ public abstract class DelegatingAgentToolInvoker(IAgentToolInvoker inner) : IAge
     protected IAgentToolInvoker Inner { get; } = inner ?? throw new ArgumentNullException(nameof(inner));
 
     /// <inheritdoc />
-    public virtual ValueTask<IReadOnlyList<AgentTool>> GetAvailableToolsAsync(AgentToolContext context, CancellationToken cancellationToken = default)
-    {
-        return this.Inner.GetAvailableToolsAsync(context, cancellationToken);
-    }
+    public virtual ValueTask<IReadOnlyList<AgentToolDescriptor>> GetAvailableToolsAsync(AgentToolContext context, CancellationToken cancellationToken = default) =>
+        this.Inner.GetAvailableToolsAsync(context, cancellationToken);
 
     /// <inheritdoc />
-    public virtual IAsyncEnumerable<string> InvokeAsync(string name, string? argumentsJson, AgentToolContext context, CancellationToken cancellationToken = default)
-    {
-        return this.Inner.InvokeAsync(name, argumentsJson, context, cancellationToken);
-    }
+    public virtual IAsyncEnumerable<string> InvokeAsync(string name, string? argumentsJson, AgentToolContext context, CancellationToken cancellationToken = default) =>
+        this.Inner.InvokeAsync(name, argumentsJson, context, cancellationToken);
 
     /// <inheritdoc />
-    public virtual Task<string> InvokeCompleteAsync(string name, string? argumentsJson, AgentToolContext context, CancellationToken cancellationToken = default)
-    {
-        return this.Inner.InvokeCompleteAsync(name, argumentsJson, context, cancellationToken);
-    }
+    public virtual Task<string> InvokeCompleteAsync(string name, string? argumentsJson, AgentToolContext context, CancellationToken cancellationToken = default) =>
+        this.Inner.InvokeCompleteAsync(name, argumentsJson, context, cancellationToken);
 }

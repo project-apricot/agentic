@@ -5,7 +5,7 @@ using ApricotFramework.Agentic.Examples.SupportDesk.Foreign;
 using ApricotFramework.Agentic.Examples.SupportDesk.Tools;
 using ApricotFramework.Agentic.Examples.SupportDesk.Validators;
 using ApricotFramework.Agentic.Tools.AspNetCore.Extensions;
-using ApricotFramework.Agentic.Tools.Options;
+using ApricotFramework.Agentic.Tools.Extensions;
 using ApricotFramework.Agentic.Tools.Sources;
 using ApricotFramework.Agentic.Tools.Validators;
 using ApricotFramework.Agentic.Tools;
@@ -27,21 +27,30 @@ public static class SupportDeskAgentTools
     /// Adds the support desk's tools and everything that runs them.
     /// </summary>
     /// <param name="services">The service collection.</param>
-    /// <returns>The same collection, for chaining.</returns>
-    public static IServiceCollection AddSupportDeskAgentTools(this IServiceCollection services)
+    /// <returns>
+    /// The builder, so the host can go on to say what only it knows - who is asking, most of all.
+    /// </returns>
+    /// <remarks>
+    /// Returns the builder rather than the collection on purpose. This is a library of tools, not
+    /// a host: it composes the machinery and leaves the host-shaped decisions to whoever is
+    /// hosting, which is what the chain is for.
+    /// </remarks>
+    public static IAgentToolsBuilder AddSupportDeskAgentTools(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
 
         services.AddSingleton<SupportDeskStore>();
 
-        // the registry, the invoker, and the tripwire. there is nothing to configure
-        services.AddAgentTools();
-
-        // authorization, asked for separately: a host with no policies configured should not be
-        // handed a filter that cannot resolve IAuthorizationService. forgetting this is caught
+        // the machinery, and the decisions where sequence is part of the meaning. authorization
+        // is asked for rather than assumed: a host with no policies configured should not be
+        // handed a filter that cannot resolve IAuthorizationService, and forgetting it is caught
         // rather than permitted - the tripwire refuses to compose a registry whose tools declare
         // authorization nothing enforces
-        services.AddAgentToolAuthorization();
+        var tools = services.AddAgentToolsCore()
+            .WithAuthorization()
+
+            // what belongs around every call rather than inside every tool
+            .DecorateInvoker<AuditingAgentToolInvoker>();
 
         // which surfaces exist is this application's idea, so it brings its own filter for it
         services.AddAgentToolFilter<SurfaceAgentToolFilter>();
@@ -53,36 +62,34 @@ public static class SupportDeskAgentTools
         services.AddAgentToolValidator<SupportDeskNamingValidator>();
         services.AddAgentToolValidator<SensitivityDeclaredValidator>();
 
-        // named one at a time, which is the shape to prefer while a surface is small enough to
-        // read. the list is then the surface, and somebody has to decide to add to it
-        services.AddAgentTool<TicketsListTool>();
-        services.AddAgentTool<TicketsGetTool>();
-        services.AddAgentTool<TicketsSearchTool>();
-        services.AddAgentTool<TicketsCreateTool>();
-        services.AddAgentTool<TicketsReassignTool>();
-        services.AddAgentTool<TicketsCloseTool>();
-        services.AddAgentTool<NotesAddTool>();
-        services.AddAgentTool<TicketsDeleteTool>();
-        services.AddAgentTool<TicketsPurgeTool>();
-        services.AddAgentTool<CustomersListTool>();
-        services.AddAgentTool<CustomersGetTool>();
-        services.AddAgentTool<CompanyRegistryLookupTool>();
-        services.AddAgentTool<ServiceStatusTool>();
+        // two classes of methods, and one tool written by hand. the list is short enough to read,
+        // which is the shape to prefer while it stays that way
+        services.AddAgentToolType<TicketTools>();
+        services.AddAgentToolType<CustomerTools>();
+        services.AddAgentToolType<OutsideTools>();
 
-        // a tool with no class of its own: a delegate wrapped as a function, gated at registration
-        // because there is no type to hang an attribute on
-        services.AddAgentTool(Summarise(), new AgentToolCreateOptions
-        {
-            Name = "support_text_summarise",
-            Title = "Summarise text",
-            IsReadOnly = true,
-            IsDestructive = false,
-            Labels = new Dictionary<string, object?>
+        // the one that has to be a class: its result arrives as a sequence, and only an AgentTool
+        // can produce items rather than one value
+        services.AddAgentTool<TicketsListTool>();
+
+        // a tool with no class and no method of its own: a delegate, gated at registration because
+        // there is nothing to hang an attribute on
+        services.AddAgentTool(
+            Summarise(),
+            new AgentToolDeclaration
             {
-                [SupportDeskLabels.Sensitivity] = Sensitivity.Public,
-                [SupportDeskLabels.Surfaces] = SupportDeskSurfaces.Both
-            }
-        }).RequireAuthorization(SupportDeskPolicies.TicketsRead);
+                Name = "support_text_summarise",
+                Title = "Summarise text",
+                Description = "Summarises a passage of text to roughly one line.",
+                IsReadOnly = true,
+                IsDestructive = false,
+                Labels = new Dictionary<string, object?>
+                {
+                    [SupportDeskLabels.Sensitivity] = Sensitivity.Public,
+                    [SupportDeskLabels.Surfaces] = SupportDeskSurfaces.Both
+                }
+            },
+            tool => tool.RequireAuthorization(SupportDeskPolicies.TicketsRead));
 
         // tools from somewhere we do not control, looked over before being offered. prefixing is
         // already done as they are adapted; this drops whatever still would not pass, so one bad
@@ -97,10 +104,7 @@ public static class SupportDeskAgentTools
                 (tool, why) => SupportDeskLog.ForeignToolRejected(
                     provider.GetRequiredService<ILogger<KnowledgeBaseToolSource>>(), why, tool.Name))));
 
-        // what belongs around every call rather than inside every tool
-        services.DecorateAgentToolInvoker<AuditingAgentToolInvoker>();
-
-        return services;
+        return tools;
     }
 
     /// <summary>

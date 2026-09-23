@@ -5,7 +5,10 @@ namespace ApricotFramework.Agentic.Tools.Tests;
 /// <summary>Tool result kinds and schemas.</summary>
 public class AgentToolTests
 {
-    private static AgentToolContext Caller() => new();
+    private static AgentToolContext Caller() => Probes.Context();
+
+    private static Microsoft.Extensions.AI.AIFunctionArguments Arguments(string? json = null) =>
+        AgentToolInvocation.Create(json, Caller());
 
     [Fact]
     public void ResultKind_SingleTool_IsWhole()
@@ -22,7 +25,7 @@ public class AgentToolTests
     [Fact]
     public void OutputSchema_SequenceTool_DescribesTheAssembledArray()
     {
-        var schema = new SequenceProbe().OutputSchema;
+        var schema = new SequenceProbe().ReturnJsonSchema;
 
         Assert.Equal("array", schema!.Value.GetProperty("type").GetString());
     }
@@ -32,7 +35,7 @@ public class AgentToolTests
     {
         // nullable because an adapted function returning nothing, or a foreign tool that
         // published none, has none to give
-        Assert.NotNull(new SingleProbe().OutputSchema);
+        Assert.NotNull(new SingleProbe().ReturnJsonSchema);
     }
 
     [Fact]
@@ -40,7 +43,7 @@ public class AgentToolTests
     {
         var items = new List<object?>();
 
-        await foreach (var item in new SequenceProbe().InvokeAsync(null, Caller(), TestContext.Current.CancellationToken))
+        await foreach (var item in new SequenceProbe().InvokeStreamingAsync(Arguments(), TestContext.Current.CancellationToken))
         {
             items.Add(item);
         }
@@ -53,7 +56,7 @@ public class AgentToolTests
     {
         var items = new List<object?>();
 
-        await foreach (var item in new SequenceProbe().InvokeAsync("   ", Caller(), TestContext.Current.CancellationToken))
+        await foreach (var item in new SequenceProbe().InvokeStreamingAsync(Arguments("   "), TestContext.Current.CancellationToken))
         {
             items.Add(item);
         }
@@ -62,26 +65,23 @@ public class AgentToolTests
     }
 
     [Fact]
-    public async Task InvokeAsync_ArgumentsThatAreNotJson_ThrowsArgumentException()
+    public void Arguments_ThatAreNotJson_ThrowArgumentException()
     {
-        var tool = new SingleProbe();
+        Assert.Throws<Exceptions.AgentToolArgumentException>(() => Arguments("{ not json"));
+    }
 
+    [Fact]
+    public async Task InvokeAsync_ArgumentsOfTheWrongShape_ThrowsArgumentException()
+    {
         await Assert.ThrowsAsync<Exceptions.AgentToolArgumentException>(async () =>
-        {
-            await foreach (var _ in tool.InvokeAsync("{ not json", Caller(), TestContext.Current.CancellationToken))
-            {
-            }
-        });
+            await new SingleProbe().InvokeAsync(Arguments("""{"id":"not a number"}"""), TestContext.Current.CancellationToken));
     }
 
     [Fact]
     public async Task InvokeAsync_ArgumentsSupplied_AreBoundToTheDeclaredType()
     {
-        var tool = new SingleProbe();
+        var result = await new SingleProbe().InvokeAsync(Arguments("""{"id":42}"""), TestContext.Current.CancellationToken);
 
-        await foreach (var item in tool.InvokeAsync("""{"id":42}""", Caller(), TestContext.Current.CancellationToken))
-        {
-            Assert.Equal(42, Assert.IsType<ProbeResult>(item).Id);
-        }
+        Assert.Equal(42, Assert.IsType<ProbeResult>(result).Id);
     }
 }

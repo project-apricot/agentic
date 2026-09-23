@@ -1,7 +1,7 @@
 using ApricotFramework.Agentic.Tools.AspNetCore.Extensions;
 using ApricotFramework.Agentic.Tools.AspNetCore.Tests;
 using ApricotFramework.Agentic.Tools.Exceptions;
-using ApricotFramework.Agentic.Tools.Options;
+using ApricotFramework.Agentic.Tools.Extensions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
@@ -19,11 +19,12 @@ public class RequireAuthorizationTests
     private static AIFunction Echo() => AIFunctionFactory.Create(
         ([Description("What to say back.")] string message) => message, "echo", "Says a message back.");
 
-    private static AgentToolCreateOptions Options(string name) => new()
+    private static AgentToolDeclaration Declaration(string name) => new()
     {
+        Name = name,
+        Description = "Says a message back.",
         IsReadOnly = true,
-        IsDestructive = false,
-        Name = name
+        IsDestructive = false
     };
 
     private static ServiceCollection Host()
@@ -33,8 +34,7 @@ public class RequireAuthorizationTests
         services.AddLogging();
         services.AddAuthorizationBuilder().AddPolicy("tools.use", policy => policy.RequireClaim("scope", "tools.use"));
         services.AddSingleton<IAuthorizationHandler>(new ProbeHandler("granted", "inherited"));
-        services.AddAgentTools();
-        services.AddAgentToolAuthorization();
+        services.AddAgentToolsCore().WithAuthorization();
 
         return services;
     }
@@ -42,7 +42,7 @@ public class RequireAuthorizationTests
     private static async Task Invoke(ServiceProvider host, string tool, ClaimsPrincipal? user)
     {
         await host.GetRequiredService<IAgentToolInvoker>().InvokeCompleteAsync(
-            tool, """{"message":"hi"}""", new AgentToolContext { User = user },
+            tool, """{"message":"hi"}""", Probes.Context(host, user),
             TestContext.Current.CancellationToken);
     }
 
@@ -51,7 +51,7 @@ public class RequireAuthorizationTests
     {
         var services = Host();
 
-        services.AddAgentTool(Echo(), Options("probe_echo_policy")).RequireAuthorization("tools.use");
+        services.AddAgentTool(Echo(), Declaration("probe_echo_policy"), tool => tool.RequireAuthorization("tools.use"));
 
         var host = services.BuildServiceProvider();
 
@@ -66,7 +66,7 @@ public class RequireAuthorizationTests
     {
         var services = Host();
 
-        services.AddAgentTool(Echo(), Options("probe_echo_attr")).RequireAuthorization(new RequireProbeAttribute("granted"));
+        services.AddAgentTool(Echo(), Declaration("probe_echo_attr"), tool => tool.RequireAuthorization(new RequireProbeAttribute("granted")));
 
         await Invoke(services.BuildServiceProvider(), "probe_echo_attr", Caller());
     }
@@ -76,7 +76,7 @@ public class RequireAuthorizationTests
     {
         var services = Host();
 
-        services.AddAgentTool(Echo(), Options("probe_echo_req")).RequireAuthorization(new ProbeRequirement("granted"));
+        services.AddAgentTool(Echo(), Declaration("probe_echo_req"), tool => tool.RequireAuthorization(new ProbeRequirement("granted")));
 
         await Invoke(services.BuildServiceProvider(), "probe_echo_req", Caller());
     }
@@ -86,7 +86,7 @@ public class RequireAuthorizationTests
     {
         var services = Host();
 
-        services.AddAgentTool(Echo(), Options("probe_echo_denied")).RequireAuthorization(new ProbeRequirement("not-granted"));
+        services.AddAgentTool(Echo(), Declaration("probe_echo_denied"), tool => tool.RequireAuthorization(new ProbeRequirement("not-granted")));
 
         await Assert.ThrowsAsync<AgentToolAccessDeniedException>(
             () => Invoke(services.BuildServiceProvider(), "probe_echo_denied", Caller()));
@@ -97,7 +97,7 @@ public class RequireAuthorizationTests
     {
         var services = Host();
 
-        services.AddAgentTool(Echo(), Options("probe_echo_any")).RequireAuthorization();
+        services.AddAgentTool(Echo(), Declaration("probe_echo_any"), tool => tool.RequireAuthorization());
 
         var host = services.BuildServiceProvider();
 
@@ -112,9 +112,9 @@ public class RequireAuthorizationTests
     {
         var services = Host();
 
-        services.AddAgentTool(Echo(), Options("probe_echo_both"))
-                .RequireAuthorization("tools.use")
-                .RequireAuthorization(new ProbeRequirement("not-granted"));
+        services.AddAgentTool(Echo(), Declaration("probe_echo_both"), tool => tool
+            .RequireAuthorization("tools.use")
+            .RequireAuthorization(new ProbeRequirement("not-granted")));
 
         await Assert.ThrowsAsync<AgentToolAccessDeniedException>(
             () => Invoke(services.BuildServiceProvider(), "probe_echo_both", Caller(new Claim("scope", "tools.use"))));
@@ -126,7 +126,7 @@ public class RequireAuthorizationTests
         var services = Host();
 
         // GatedProbe already requires "granted" and "inherited" by attribute
-        services.AddAgentTool<GatedProbe>().RequireAuthorization(new ProbeRequirement("not-granted"));
+        services.AddAgentTool<GatedProbe>(tool => tool.RequireAuthorization(new ProbeRequirement("not-granted")));
 
         await Assert.ThrowsAsync<AgentToolAccessDeniedException>(
             () => Invoke(services.BuildServiceProvider(), "probe_items_gated", Caller()));
@@ -137,11 +137,13 @@ public class RequireAuthorizationTests
     {
         var services = Host();
 
-        services.AddAgentTool(Echo(), Options("probe_echo_valid")).RequireAuthorization("tools.use");
+        services.AddAgentTool(Echo(), Declaration("probe_echo_valid"), tool => tool.RequireAuthorization("tools.use"));
 
-        var tools = await services.BuildServiceProvider()
+        var host = services.BuildServiceProvider();
+
+        var tools = await host
             .GetRequiredService<IAgentToolRegistry>()
-            .GetToolsAsync(TestContext.Current.CancellationToken);
+            .GetToolsAsync(Probes.Context(host), TestContext.Current.CancellationToken);
 
         Assert.Single(tools);
     }
@@ -153,11 +155,11 @@ public class RequireAuthorizationTests
         // comes from what the registration carries, not from how the tool was built
         var services = Host();
 
-        services.AddAgentTool(Echo(), Options("probe_echo_ungated"));
+        services.AddAgentTool(Echo(), Declaration("probe_echo_ungated"));
 
         var host = services.BuildServiceProvider();
 
-        Assert.Single(await host.GetRequiredService<IAgentToolRegistry>().GetToolsAsync(TestContext.Current.CancellationToken));
+        Assert.Single(await host.GetRequiredService<IAgentToolRegistry>().GetToolsAsync(Probes.Context(host), TestContext.Current.CancellationToken));
 
         await Invoke(host, "probe_echo_ungated", Caller());
     }
@@ -169,8 +171,8 @@ public class RequireAuthorizationTests
         // them all together
         var services = Host();
 
-        services.AddAgentTool(Echo(), Options("probe_echo_open")).RequireAuthorization(new ProbeRequirement("granted"));
-        services.AddAgentTool(Echo(), Options("probe_echo_shut")).RequireAuthorization(new ProbeRequirement("not-granted"));
+        services.AddAgentTool(Echo(), Declaration("probe_echo_open"), tool => tool.RequireAuthorization(new ProbeRequirement("granted")));
+        services.AddAgentTool(Echo(), Declaration("probe_echo_shut"), tool => tool.RequireAuthorization(new ProbeRequirement("not-granted")));
 
         var host = services.BuildServiceProvider();
 

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>ApricotFramework.Agentic.Tools.Grpc.Server</RootNamespace>
+    <Description>Serves this host's agent tools over the apricot.agentic.v1 gRPC contract, so another service can federate them. Lists and invokes through the same executor every other surface uses, which is what keeps one set of filters deciding for all of them.</Description>
+    <PackageTags>ai;agent;agentic;tools;grpc;function-calling</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Grpc.AspNetCore.Server" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../ApricotFramework.Agentic.Tools/ApricotFramework.Agentic.Tools.csproj" />
+    <ProjectReference Include="../ApricotFramework.Agentic.Tools.Grpc/ApricotFramework.Agentic.Tools.Grpc.csproj" />
+  </ItemGroup>
+
+</Project>

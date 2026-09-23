@@ -16,34 +16,32 @@ public class DecorateAgentToolInvokerTests
     private static ClaimsPrincipal Caller() =>
         new(new ClaimsIdentity([new Claim("sub", "u1")], "test"));
 
-    private static ServiceCollection Host()
+    private static IAgentToolsBuilder Host()
     {
         var services = new ServiceCollection();
 
         services.AddLogging();
         services.AddAuthorization();
         services.AddSingleton<IAuthorizationHandler>(new ProbeHandler("granted", "inherited"));
-        services.AddAgentTools();
-        services.AddAgentToolAuthorization();
         services.AddAgentTool<GatedProbe>();
 
-        return services;
+        return services.AddAgentToolsCore().WithAuthorization();
     }
 
     private static Task<string> Invoke(ServiceProvider host) =>
         host.GetRequiredService<IAgentToolInvoker>().InvokeCompleteAsync(
-            "probe_items_gated", null, new AgentToolContext { User = Caller() },
+            "probe_items_gated", null, Probes.Context(Probes.Empty, Caller()),
             TestContext.Current.CancellationToken);
 
     [Fact]
     public async Task Decorate_WrapsWhatWasRegistered()
     {
-        var services = Host();
+        var tools = Host();
 
-        services.AddSingleton<Journal>();
-        services.DecorateAgentToolInvoker<JournallingInvoker>();
+        tools.Services.AddSingleton<Journal>();
+        tools.DecorateInvoker<JournallingInvoker>();
 
-        var host = services.BuildServiceProvider();
+        var host = tools.Services.BuildServiceProvider();
 
         await Invoke(host);
 
@@ -53,13 +51,13 @@ public class DecorateAgentToolInvokerTests
     [Fact]
     public async Task Decorate_TwiceOver_ReachesTheLastRegisteredFirst()
     {
-        var services = Host();
+        var tools = Host();
 
-        services.AddSingleton<Journal>();
-        services.DecorateAgentToolInvoker<InnerRecordingInvoker>();
-        services.DecorateAgentToolInvoker<OuterRecordingInvoker>();
+        tools.Services.AddSingleton<Journal>();
+        tools.DecorateInvoker<InnerRecordingInvoker>();
+        tools.DecorateInvoker<OuterRecordingInvoker>();
 
-        var host = services.BuildServiceProvider();
+        var host = tools.Services.BuildServiceProvider();
 
         await Invoke(host);
 
@@ -70,23 +68,23 @@ public class DecorateAgentToolInvokerTests
     [Fact]
     public async Task Decorate_StillResolvesTheRealInvokerUnderneath()
     {
-        var services = Host();
+        var tools = Host();
 
-        services.AddSingleton<Journal>();
-        services.DecorateAgentToolInvoker<JournallingInvoker>();
+        tools.Services.AddSingleton<Journal>();
+        tools.DecorateInvoker<JournallingInvoker>();
 
-        Assert.Equal("\"ok\"", await Invoke(services.BuildServiceProvider()));
+        Assert.Equal("\"ok\"", await Invoke(tools.Services.BuildServiceProvider()));
     }
 
     [Fact]
     public void Decorate_ResolvedAsASingleton_IsOneInstance()
     {
-        var services = Host();
+        var tools = Host();
 
-        services.AddSingleton<Journal>();
-        services.DecorateAgentToolInvoker<JournallingInvoker>();
+        tools.Services.AddSingleton<Journal>();
+        tools.DecorateInvoker<JournallingInvoker>();
 
-        var host = services.BuildServiceProvider();
+        var host = tools.Services.BuildServiceProvider();
 
         Assert.Same(host.GetRequiredService<IAgentToolInvoker>(), host.GetRequiredService<IAgentToolInvoker>());
     }
@@ -95,25 +93,27 @@ public class DecorateAgentToolInvokerTests
     public void Decorate_WrappingAnInstanceRegistration_Works()
     {
         // a descriptor can say what it provides three ways, and a wrapper has to cope with all
-        var services = Host();
+        var tools = Host();
 
-        services.AddSingleton<Journal>();
-        services.RemoveAll<IAgentToolInvoker>();
-        services.AddSingleton<IAgentToolInvoker>(new AgentToolInvoker(
+        tools.Services.AddSingleton<Journal>();
+        tools.Services.RemoveAll<IAgentToolInvoker>();
+        tools.Services.AddSingleton<IAgentToolInvoker>(new AgentToolInvoker(
             new AgentToolRegistry([StaticAgentToolSource.For()]),
             null));
 
-        services.DecorateAgentToolInvoker<JournallingInvoker>();
+        tools.DecorateInvoker<JournallingInvoker>();
 
-        Assert.IsType<JournallingInvoker>(services.BuildServiceProvider().GetRequiredService<IAgentToolInvoker>());
+        Assert.IsType<JournallingInvoker>(tools.Services.BuildServiceProvider().GetRequiredService<IAgentToolInvoker>());
     }
 
     [Fact]
     public void Decorate_WithNothingRegistered_Throws()
     {
-        var services = new ServiceCollection();
+        var tools = new ServiceCollection().AddAgentToolsCore();
 
-        Assert.Throws<InvalidOperationException>(() => services.DecorateAgentToolInvoker<JournallingInvoker>());
+        tools.Services.RemoveAll<IAgentToolInvoker>();
+
+        Assert.Throws<InvalidOperationException>(() => tools.DecorateInvoker<JournallingInvoker>());
     }
 
     /// <summary>Somewhere a wrapper can record what it saw.</summary>

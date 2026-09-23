@@ -1,0 +1,127 @@
+---
+title: Sources
+description: Where tools come from, why the registry asks again every time, and how to curate what you do not control.
+---
+
+# Sources
+
+A source answers one question: **what tools does this caller have?**
+
+```csharp
+public interface IAgentToolSource
+{
+    ValueTask<IReadOnlyList<AgentToolDescriptor>> GetToolsAsync(
+        IAgentToolSourceContext context, CancellationToken cancellationToken = default);
+}
+```
+
+Three ship: `RegistrationAgentToolSource` (what was registered in code),
+`StaticAgentToolSource` (a fixed list, mostly for tests), and `CuratingAgentToolSource` (a source
+looked over before it is offered). The [MCP](/docs/agentic/mcp) and [gRPC](/docs/agentic/grpc)
+packages each add one.
+
+```csharp
+builder.Services.AddAgentToolSource<ForeignToolSource>();
+builder.Services.AddAgentToolSource(provider => new CuratingAgentToolSource(…));   // for one that wraps another
+```
+
+## The caller is a parameter
+
+```csharp
+public interface IAgentToolSourceContext
+{
+    ClaimsPrincipal? User { get; }
+    IServiceProvider Services { get; }
+}
+```
+
+Narrower than `AgentToolContext` on purpose. A source answers a question about the caller, not
+about a call, so it is told the caller and nothing else — `Progress` and per-invocation state
+exist only once something is running, and a source reading them would be reading values a listing
+cannot fill in.
+
+`AgentToolContext` implements it, so a source written by the host that genuinely needs the host's
+own context type can cast down to it. A source meant to be portable reaches host state through
+`Services`, which is the same route a tool uses — an authenticator, a connection pool, a clock.
+
+## The registry asks again every time
+
+`IAgentToolRegistry` composes on every listing and every call, and holds nothing between them.
+That is not an oversight: a source over upstream MCP servers has connections to make, tools that
+change while the process runs, and — where a host connects servers per person — a different
+answer for each caller. A registry that composed once could express none of that.
+
+Two things keep it cheap.
+
+**Caching is the source's own business.** A source with a fixed list returns a field. The MCP
+source caches per connection and drops the cache when a server says its tools changed. The gRPC
+source caches only when a host opts in, because a remote listing is already filtered by who is
+asking.
+
+**Validation is memoised by descriptor identity.** A source handing back the same instances is
+checked once in the life of the process, not once per listing — and only a declaration that
+*passed* is remembered, so one that threw says so again next time.
+
+## Validators
+
+What a declaration ought to carry beyond a name is the host's judgement, so none of these are
+registered until you ask:
+
+```csharp
+builder.Services.AddAgentToolValidator<TitleDeclaredValidator>();
+builder.Services.AddAgentToolValidator<DescriptionDeclaredValidator>();
+builder.Services.AddAgentToolValidator<ConsistentBehaviourValidator>();
+builder.Services.AddAgentToolValidator<ToolNamingConvention>();          // yours
+```
+
+The registry itself insists on two things, and neither is an opinion: a tool has a name, and no
+two tools share one. Without either it cannot address them.
+
+ASP.NET Core does not check that your controller has a summary either. It checks what it needs to
+function and leaves the rest to you.
+
+## Checked at startup, not at first request
+
+`AddAgentToolsCore()` registers a hosted service that composes **the tools registered in code** before
+the host serves anything, and runs every validator over them. A malformed declaration of yours
+stops the host, rather than surfacing to whoever happens to ask first.
+
+Dynamic sources are deliberately not reached at startup. A service that will not start because a
+third party is down is worse than one running with fewer tools, and a foreign declaration that
+would fail validation is dropped at composition time instead.
+
+## Curation
+
+`CuratingAgentToolSource` sees each tool and returns it, a different declaration over it, or null
+to leave it out.
+
+| Curator | For |
+| --- | --- |
+| `AgentToolCuration.Prefixing("weather_")` | Names chosen without knowing what they would sit beside |
+| `AgentToolCuration.Adding(metadata)` | Gating something that carries no attribute |
+| `AgentToolCuration.Where(predicate)` | An allowlist — a server can add a tool after you reviewed what it offers |
+| `AgentToolCuration.DropRejected(validators, onRejected)` | One malformed declaration costing you that tool rather than all of them |
+
+```csharp
+builder.Services.AddAgentToolSource(provider => new CuratingAgentToolSource(
+    new CuratingAgentToolSource(provider.GetRequiredService<ForeignToolSource>(), AgentToolCuration.Prefixing("weather_")),
+    AgentToolCuration.DropRejected(
+        provider.GetServices<IAgentToolValidator>(),
+        (tool, why) => provider.GetRequiredService<ILogger<ForeignToolSource>>().LogWarning(why, "Left out {Tool}", tool.Name))));
+```
+
+**Report what you drop.** A tool silently absent is the failure nobody can diagnose, and dropping
+turns a loud failure into a quiet one on purpose. The `onRejected` callback carries the tool and
+the reason.
+
+**A collision is the one thing no per-tool check can find**, because it is only visible once both
+tools are in front of the registry. `Prefixing` avoids it rather than detecting it; the registry
+still refuses an ambiguous name rather than picking one, which is the right failure for something
+genuinely undecidable — and with dynamic sources it can now happen at run time, when an upstream
+server adds a tool named like one of yours.
+
+## Reshaping a listing
+
+Capping it, sorting it, hiding something deprecated but still callable — none of those are a
+filter's job, because a filter's answer also governs the call. They belong in an
+[executor wrapper](/docs/agentic/hosting#wrapping).

@@ -1,8 +1,9 @@
+using ApricotFramework.Agentic.Tools.Adapters;
 using ApricotFramework.Agentic.Tools.AspNetCore.Authorization;
 using ApricotFramework.Agentic.Tools.AspNetCore.Extensions;
 using ApricotFramework.Agentic.Tools.Filters;
 using ApricotFramework.Agentic.Tools.AspNetCore.Tests;
-using ApricotFramework.Agentic.Tools.AspNetCore.Validators;
+using ApricotFramework.Agentic.Tools.Validators;
 using ApricotFramework.Agentic.Tools.Exceptions;
 using ApricotFramework.Agentic.Tools.Registry;
 using ApricotFramework.Agentic.Tools.Sources;
@@ -15,7 +16,7 @@ namespace ApricotFramework.Agentic.Tools.AspNetCore.Tests.Authorization;
 /// <summary>Deciding a tool from what it declares - a requirement attribute, a named policy, or a role.</summary>
 public class AgentToolAuthorizationTests
 {
-    private static AgentToolContext Asking(ClaimsPrincipal? user) => new() { User = user };
+    private static AgentToolContext Asking(ClaimsPrincipal? user) => Probes.Context(Probes.Empty, user);
 
     private static ClaimsPrincipal Caller(params Claim[] claims) =>
         new(new ClaimsIdentity([new Claim("sub", "u1"), .. claims], "test", ClaimTypes.Name, ClaimTypes.Role));
@@ -27,8 +28,7 @@ public class AgentToolAuthorizationTests
         services.AddLogging();
         services.AddAuthorizationBuilder().AddPolicy("tools.use", policy => policy.RequireClaim("scope", "tools.use"));
         services.AddSingleton<IAuthorizationHandler>(new ProbeHandler(grantedProbes));
-        services.AddAgentTools();
-        services.AddAgentToolAuthorization();
+        services.AddAgentToolsCore().WithAuthorization();
         services.AddAgentTool<GatedProbe>();
         services.AddAgentTool<PolicyProbe>();
         services.AddAgentTool<RoleProbe>();
@@ -39,7 +39,7 @@ public class AgentToolAuthorizationTests
 
     private static async Task Authorize(ServiceProvider host, string tool, ClaimsPrincipal? user)
     {
-        var declared = await host.GetRequiredService<IAgentToolRegistry>().RequireAsync(tool, TestContext.Current.CancellationToken);
+        var declared = await host.GetRequiredService<IAgentToolRegistry>().RequireAsync(tool, Probes.Context(host), TestContext.Current.CancellationToken);
 
         var decision = await host.GetServices<IAgentToolFilter>().OfType<AuthorizationAgentToolFilter>().Single()
             .EvaluateAsync(declared, Asking(user), TestContext.Current.CancellationToken);
@@ -110,7 +110,7 @@ public class AgentToolAuthorizationTests
     }
 
     [Fact]
-    public async Task Authorize_ToolIsPassedAsTheResource_SoAHandlerCanNarrowOnIt()
+    public async Task Authorize_DescriptorIsPassedAsTheResource_SoAHandlerCanNarrowOnIt()
     {
         var services = new ServiceCollection();
 
@@ -120,15 +120,24 @@ public class AgentToolAuthorizationTests
         var handler = new ResourceCapturingHandler();
 
         services.AddSingleton<IAuthorizationHandler>(handler);
-        services.AddAgentTools();
-        services.AddAgentToolAuthorization();
+        services.AddAgentToolsCore().WithAuthorization();
         services.AddAgentTool<GatedProbe>();
 
         var host = services.BuildServiceProvider();
 
         await Authorize(host, "probe_items_gated", Caller());
 
-        Assert.Equal("probe_items_gated", Assert.IsType<GatedProbe>(handler.Resource).Name);
+        // the descriptor, not the tool: a handler that wants to narrow on "destructive" or on a
+        // label reads the declaration, and one that wants what the host said reads the metadata.
+        // handing it only the tool would have closed off the second
+        var resource = Assert.IsType<AgentToolDescriptor>(handler.Resource);
+
+        Assert.Equal("probe_items_gated", resource.Name);
+
+        // and a class-per-tool is no longer reachable by its own type from a listing, because no
+        // instance of it exists until somebody calls it. what it declares is
+        Assert.False(resource.Declaration.IsDestructive);
+        Assert.Equal(typeof(GatedProbe), Assert.IsType<ScopedAgentTool>(resource.Tool).ToolType);
     }
 
 

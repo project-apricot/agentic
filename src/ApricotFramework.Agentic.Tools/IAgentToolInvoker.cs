@@ -1,30 +1,18 @@
-using ApricotFramework.Agentic.Tools.Invocation;
-
 namespace ApricotFramework.Agentic.Tools;
 
 /// <summary>
-/// Answers what a caller could invoke and invokes it.
+/// Listing and running tools for a caller whose context is already built.
 /// </summary>
 /// <remarks>
 /// <para>
-/// An interface because a tool call is the natural place for the things a host wants around every
-/// tool call: a log line, a span, a rate limit, a record of what an agent did on somebody's
-/// behalf. Those are wrappers rather than replacements, and wrapping is what an interface allows
-/// and a concrete class does not.
+/// The inner half of running a tool. <see cref="IAgentToolExecutor"/> is what a surface calls; it
+/// opens the scope and builds the context, then hands both to this. The two are separate because
+/// they are wrapped for different reasons - an audit record needs the caller and belongs here, a
+/// rate limit on a surface does not and belongs there.
 /// </para>
 /// <para>
-/// <see cref="DelegatingAgentToolInvoker"/> is the base to start from - it passes everything
-/// through, so a wrapper says only what it changes.
-/// </para>
-/// <para>
-/// The tool and its arguments are parameters rather than part of the context because they
-/// describe one call where the context describes the caller. A loop asking five questions on
-/// somebody's behalf builds the context at once.
-/// </para>
-/// <para>
-/// Both questions are here on purpose. A host that wrapped the call but not the listing would
-/// have a rate limit that counts invocations and a log that misses what was offered, and the two
-/// would answer to different rules.
+/// One component answers what a caller could do and then does it, so a listing and a gate cannot
+/// disagree.
 /// </para>
 /// </remarks>
 public interface IAgentToolInvoker
@@ -34,8 +22,8 @@ public interface IAgentToolInvoker
     /// </summary>
     /// <param name="context">Who is asking.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A task containing the tools the caller is permitted, on the surface they arrived on.</returns>
-    ValueTask<IReadOnlyList<AgentTool>> GetAvailableToolsAsync(AgentToolContext context, CancellationToken cancellationToken = default);
+    /// <returns>A task containing the tools the caller is permitted.</returns>
+    ValueTask<IReadOnlyList<AgentToolDescriptor>> GetAvailableToolsAsync(AgentToolContext context, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Runs a tool and reports its result as it arrives.

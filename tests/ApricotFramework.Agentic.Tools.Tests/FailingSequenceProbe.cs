@@ -3,7 +3,7 @@ using System.Runtime.CompilerServices;
 namespace ApricotFramework.Agentic.Tools.Tests;
 
 /// <summary>A tool that fails part way through its sequence.</summary>
-public sealed class FailingSequenceProbe : AgentStreamTool<AgentToolNoArguments, ProbeResult>
+public sealed class FailingSequenceProbe : ProbeStreamTool<ProbeNoArguments, ProbeResult>
 {
     /// <inheritdoc />
     public override string Name => "probe_items_fail";
@@ -22,7 +22,7 @@ public sealed class FailingSequenceProbe : AgentStreamTool<AgentToolNoArguments,
 
 
     /// <inheritdoc />
-    protected override async IAsyncEnumerable<ProbeResult> ExecuteAsync(AgentToolNoArguments arguments, AgentToolContext context, [EnumeratorCancellation] CancellationToken cancellationToken)
+    protected override async IAsyncEnumerable<ProbeResult> ExecuteAsync(ProbeNoArguments arguments, AgentToolContext context, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         await Task.Yield();
 

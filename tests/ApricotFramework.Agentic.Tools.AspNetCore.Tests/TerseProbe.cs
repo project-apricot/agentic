@@ -2,9 +2,9 @@ using Microsoft.AspNetCore.Authorization;
 
 namespace ApricotFramework.Agentic.Tools.AspNetCore.Tests;
 
-/// <summary>A tool with no description, to show nothing insists on one.</summary>
+/// <summary>A tool with no title and no description, to show nothing insists on either.</summary>
 [RequireProbe("granted")]
-public sealed class TerseProbe : AgentTool<AgentToolNoArguments, string>
+public sealed class TerseProbe : ProbeToolBase
 {
     /// <inheritdoc />
     public override string Name => "probe_items_terse";
@@ -14,13 +14,4 @@ public sealed class TerseProbe : AgentTool<AgentToolNoArguments, string>
 
     /// <inheritdoc />
     public override string Description => "  ";
-
-    /// <inheritdoc />
-    public override bool IsReadOnly => true;
-
-    /// <inheritdoc />
-    public override bool IsDestructive => false;
-
-    /// <inheritdoc />
-    protected override Task<string> ExecuteAsync(AgentToolNoArguments arguments, AgentToolContext context, CancellationToken cancellationToken) => Task.FromResult("ok");
 }

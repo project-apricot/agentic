@@ -12,7 +12,7 @@ public class AgentToolValidatorTests
     {
         var registry = new AgentToolRegistry([StaticAgentToolSource.For(tool)], validators);
 
-        return await registry.GetToolsAsync(TestContext.Current.CancellationToken);
+        return await registry.GetToolsAsync(Probes.Context(), TestContext.Current.CancellationToken);
     }
 
     [Fact]

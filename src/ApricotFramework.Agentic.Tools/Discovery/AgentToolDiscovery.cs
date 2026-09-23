@@ -60,6 +60,52 @@ public static class AgentToolDiscovery
     }
 
     /// <summary>
+    /// Finds the types holding tool methods in an assembly.
+    /// </summary>
+    /// <param name="assembly">The assembly to look in.</param>
+    /// <param name="predicate">A further test each candidate has to pass, or null for none.</param>
+    /// <returns>The types found, in no particular order.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="assembly"/> is null.</exception>
+    /// <remarks>
+    /// The other way a tool is written: a class carrying <see cref="AgentToolTypeAttribute"/>,
+    /// whose methods carry <see cref="AgentToolAttribute"/>.
+    /// </remarks>
+    public static IEnumerable<Type> ToolTypesFromAssembly(Assembly assembly, Func<Type, bool>? predicate = null)
+    {
+        ArgumentNullException.ThrowIfNull(assembly);
+
+        return assembly.GetTypes().Where(type => IsToolType(type) && (predicate?.Invoke(type) ?? true));
+    }
+
+    /// <summary>
+    /// Finds the types holding tool methods in several assemblies.
+    /// </summary>
+    /// <param name="assemblies">The assemblies to look in.</param>
+    /// <param name="predicate">A further test each candidate has to pass, or null for none.</param>
+    /// <returns>The types found, each once, in no particular order.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="assemblies"/> is null.</exception>
+    public static IEnumerable<Type> ToolTypesFromAssemblies(IEnumerable<Assembly> assemblies, Func<Type, bool>? predicate = null)
+    {
+        ArgumentNullException.ThrowIfNull(assemblies);
+
+        return assemblies.SelectMany(assembly => ToolTypesFromAssembly(assembly, predicate)).Distinct();
+    }
+
+    /// <summary>
+    /// Checks whether a type holds tool methods.
+    /// </summary>
+    /// <param name="type">The type to check.</param>
+    /// <returns>True where the type is a discoverable holder of tool methods.</returns>
+    public static bool IsToolType(Type type)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+
+        return type is { IsClass: true, IsAbstract: false, IsGenericTypeDefinition: false }
+               && type.GetCustomAttribute<AgentToolTypeAttribute>(inherit: false) is not null
+               && type.GetCustomAttribute<AgentToolIgnoreAttribute>(inherit: false) is null;
+    }
+
+    /// <summary>
     /// Checks whether a type is a tool that can be instantiated as one.
     /// </summary>
     /// <param name="type">The type to check.</param>

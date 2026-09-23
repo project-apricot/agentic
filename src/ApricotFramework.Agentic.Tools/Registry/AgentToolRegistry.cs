@@ -1,27 +1,11 @@
 using ApricotFramework.Agentic.Tools.Exceptions;
+using System.Runtime.CompilerServices;
 
 namespace ApricotFramework.Agentic.Tools.Registry;
 
 /// <summary>
-/// Composes the tools every source offers, checks them, and holds the answer.
+/// The registry: every source, composed for whoever is asking.
 /// </summary>
-/// <remarks>
-/// <para>
-/// Declarations are checked as they are composed. A malformed tool is a host that refuses to
-/// serve rather than a listing a consumer has already cached, and two tools claiming one name are
-/// caught before either is advertised.
-/// </para>
-/// <para>
-/// Composed once, on first use, and held. That is right for tools declared in code and wrong for
-/// tools that come and go, which is why <see cref="IAgentToolRegistry"/> exists - a host with
-/// sources that change replaces this rather than waiting for it to grow a refresh it would then
-/// have to make thread-safe for everyone.
-/// </para>
-/// <para>
-/// Composition being lazy means a malformed declaration surfaces on first use rather than at
-/// startup. A host wanting the earlier failure asks for the tools while it is starting.
-/// </para>
-/// </remarks>
 public class AgentToolRegistry : IAgentToolRegistry
 {
     /// <summary>
@@ -30,14 +14,20 @@ public class AgentToolRegistry : IAgentToolRegistry
     private readonly IReadOnlyList<IAgentToolSource> sources;
 
     /// <summary>
-    /// The host's checks, applied to each declaration after the universal ones.
+    /// The host's checks, applied to each declaration as it arrives.
     /// </summary>
     private readonly IReadOnlyList<IAgentToolValidator> validators;
 
     /// <summary>
-    /// The composition, once it has been made.
+    /// The descriptors already checked.
     /// </summary>
-    private Dictionary<string, AgentToolDescriptor>? composed;
+    /// <remarks>
+    /// Keyed on the descriptor itself, so a source handing back the same instances - which a
+    /// source with a fixed list does - is checked once in the life of the process rather than
+    /// once per listing. A source that rebuilds its descriptors pays for each rebuild, which is
+    /// right: those are new declarations and have not been looked at.
+    /// </remarks>
+    private readonly ConditionalWeakTable<AgentToolDescriptor, object> checkedAlready = [];
 
     /// <summary>
     /// Creates a new instance of the registry.
@@ -49,96 +39,94 @@ public class AgentToolRegistry : IAgentToolRegistry
     {
         ArgumentNullException.ThrowIfNull(sources);
 
-        this.sources = sources.ToList();
-        this.validators = validators?.ToList() ?? [];
+        this.sources = [.. sources];
+        this.validators = validators is null ? [] : [.. validators];
     }
 
     /// <inheritdoc />
-    public async ValueTask<IReadOnlyList<AgentToolDescriptor>> GetToolsAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<IReadOnlyList<AgentToolDescriptor>> GetToolsAsync(IAgentToolSourceContext context, CancellationToken cancellationToken = default)
     {
-        var tools = await this.ComposeAsync(cancellationToken).ConfigureAwait(false);
+        ArgumentNullException.ThrowIfNull(context);
 
-        return [.. tools.Values];
+        var declared = new Dictionary<string, AgentToolDescriptor>(StringComparer.Ordinal);
+
+        foreach (var source in this.sources)
+        {
+            foreach (var tool in await source.GetToolsAsync(context, cancellationToken).ConfigureAwait(false))
+            {
+                this.Validate(tool);
+
+                if (!declared.TryAdd(tool.Name, tool))
+                {
+                    throw new AgentToolDeclarationException(
+                        $"Two tools are offered as '{tool.Name}'. A tool name is a contract and has to address one operation.");
+                }
+            }
+        }
+
+        return [.. declared.Values];
     }
 
     /// <inheritdoc />
-    public async ValueTask<AgentToolDescriptor?> FindAsync(string? name, CancellationToken cancellationToken = default)
+    public async ValueTask<AgentToolDescriptor?> FindAsync(string? name, IAgentToolSourceContext context, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
             return null;
         }
 
-        var tools = await this.ComposeAsync(cancellationToken).ConfigureAwait(false);
+        var tools = await this.GetToolsAsync(context, cancellationToken).ConfigureAwait(false);
 
-        return tools.GetValueOrDefault(name);
+        return tools.FirstOrDefault(tool => string.Equals(tool.Name, name, StringComparison.Ordinal));
     }
 
     /// <inheritdoc />
-    public async ValueTask<AgentToolDescriptor> RequireAsync(string? name, CancellationToken cancellationToken = default)
+    public async ValueTask<AgentToolDescriptor> RequireAsync(string? name, IAgentToolSourceContext context, CancellationToken cancellationToken = default)
     {
-        return await this.FindAsync(name, cancellationToken).ConfigureAwait(false)
+        return await this.FindAsync(name, context, cancellationToken).ConfigureAwait(false)
                ?? throw new AgentToolNotFoundException($"No tool is offered as '{name}'.");
     }
 
     /// <summary>
-    /// Composes the sources, once.
-    /// </summary>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A task containing the tools by name.</returns>
-    /// <remarks>
-    /// Unlocked. Two callers arriving at once both compose. One of them wins the exchange -
-    /// which costs a little-repeated work exactly once in the life of the process and avoids
-    /// holding a lock across whatever a source has to do to answer.
-    /// </remarks>
-    private async ValueTask<Dictionary<string, AgentToolDescriptor>> ComposeAsync(CancellationToken cancellationToken)
-    {
-        var existing = Volatile.Read(ref this.composed);
-
-        if (existing is not null)
-        {
-            return existing;
-        }
-
-        var declared = new Dictionary<string, AgentToolDescriptor>(StringComparer.Ordinal);
-
-        foreach (var source in this.sources)
-        {
-            foreach (var tool in await source.GetToolsAsync(cancellationToken).ConfigureAwait(false))
-            {
-                this.Validate(tool);
-
-                if (!declared.TryAdd(tool.Name, tool))
-                {
-                    throw new AgentToolDeclarationException($"Two tools are offered as '{tool.Name}'. A tool name is a contract and has to address one operation.");
-                }
-            }
-        }
-
-        return Interlocked.CompareExchange(ref this.composed, declared, null) ?? declared;
-    }
-
-    /// <summary>
-    /// Checks one declaration.
+    /// Checks one declaration, once.
     /// </summary>
     /// <param name="tool">The tool to check.</param>
     /// <remarks>
-    /// Only what this class needs to address a tool. Everything a host could reasonably
-    /// disagree about is an <see cref="IAgentToolValidator"/>, and none of those are registered
-    /// unless a host asks for them.
+    /// Only what this class needs to address a tool. Everything a host could reasonably disagree
+    /// about is an <see cref="IAgentToolValidator"/>, and none of those are registered unless a
+    /// host asks for them.
     /// </remarks>
     private void Validate(AgentToolDescriptor tool)
     {
         ArgumentNullException.ThrowIfNull(tool);
 
+        if (this.checkedAlready.TryGetValue(tool, out _))
+        {
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(tool.Name))
         {
-            throw new AgentToolDeclarationException($"The tool '{tool.Tool.GetType().Name}' declares no name, so nothing can address it.");
+            throw new AgentToolDeclarationException($"A tool from '{tool.Tool.GetType().Name}' declares no name, so nothing can address it.");
+        }
+
+        // a declaration that claims a capability the function cannot provide is not an opinion
+        // a host might reasonably hold - it is a claim that travels, over gRPC and into another
+        // service's listing, and misleads whoever acts on it
+        if (tool.Declaration.ResultKind == AgentToolResultKind.Sequence && tool.Tool is not AgentTool)
+        {
+            throw new AgentToolDeclarationException(
+                $"The tool '{tool.Name}' declares a sequence result, but the function behind it returns one value and " +
+                "cannot produce items. Declare it whole, or back it with an AgentTool that implements InvokeStreamingAsync.");
         }
 
         foreach (var validator in this.validators)
         {
             validator.Validate(tool);
         }
+
+        // only once it passed. a declaration that threw has not been accepted, and the next
+        // listing should say so again rather than quietly letting it through
+        this.checkedAlready.AddOrUpdate(tool, this);
     }
 }

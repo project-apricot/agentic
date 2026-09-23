@@ -37,7 +37,7 @@ public sealed class SurfaceAgentToolFilter : IAgentToolFilter
             return ValueTask.FromResult(AgentToolFilterDecision.Allow());
         }
 
-        var surfaces = tool.Tool.TryGetLabel<string>(SupportDeskLabels.Surfaces, out var declared) ? declared! : string.Empty;
+        var surfaces = tool.Declaration.TryGetLabel<string>(SupportDeskLabels.Surfaces, out var declared) ? declared! : string.Empty;
 
         var allowed = surfaces
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
