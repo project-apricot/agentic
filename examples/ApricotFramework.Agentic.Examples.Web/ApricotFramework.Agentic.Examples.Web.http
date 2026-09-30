@@ -7,8 +7,8 @@
 @writer    = X-Demo-Scopes: tickets.read tickets.write customers.read
 @admin     = X-Demo-Scopes: tickets.read tickets.write tickets.admin customers.read
 
-### What this caller can do. Filtered by the same authorizer that gates the call, so nothing
-### listed here will then refuse them.
+### What this caller can do. Filtered and authorized exactly as the call is, so nothing listed
+### here will then refuse them.
 GET {{host}}/tools
 {{reader}}
 {{readScope}}

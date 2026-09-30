@@ -47,7 +47,7 @@ public class WebEntryPointTests
         // deliberate: it needs IAuthorizationService, and a host with open tools is real
         var host = new ServiceCollection().AddAgentToolsWeb().Services.BuildServiceProvider();
 
-        Assert.Empty(host.GetServices<IAgentToolFilter>());
+        Assert.Empty(host.GetServices<IAgentToolAuthorizationFilter>());
     }
 
     [Fact]
@@ -60,6 +60,6 @@ public class WebEntryPointTests
 
         var host = services.AddAgentToolsWeb().WithAuthorization().Services.BuildServiceProvider();
 
-        Assert.Single(host.GetServices<IAgentToolFilter>());
+        Assert.Single(host.GetServices<IAgentToolAuthorizationFilter>());
     }
 }

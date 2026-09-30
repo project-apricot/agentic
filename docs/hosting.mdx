@@ -246,16 +246,22 @@ separate calls rather than one expressed in terms of the other, so a wrapper ove
 streaming one misses every caller that cannot stream. A rate limit on one of the two is a rate
 limit on neither.
 
-The invoker is resolved from the call's own scope, so a filter or a wrapper that reads per-call
-state can be registered scoped:
+The invoker is resolved from the call's own scope, so a filter, an authorization filter or a
+wrapper that reads per-call state can be registered scoped, and is built once per call:
 
 ```csharp
 builder.Services.AddAgentToolFilter<TenantAgentToolFilter>(ServiceLifetime.Scoped);
+builder.Services.AddAgentToolAuthorizationFilter<EntitlementAgentToolAuthorizationFilter>(ServiceLifetime.Scoped);
 ```
+
+Filters run first and decide what exists for the caller; authorization filters run after and
+decide what they may run. See [Authorization](/docs/agentic/authorization) for why the two are
+kept apart.
 
 ## Errors
 
-Failures are `AgentToolException` and its derivatives — `AgentToolNotFoundException`,
+Failures are `AgentToolException` and its derivatives — `AgentToolNotFoundException` (and
+`AgentToolFilteredException`, the same answer for a tool a filter kept from this caller),
 `AgentToolArgumentException`, `AgentToolAccessDeniedException`, `AgentToolDeclarationException`,
 `AgentToolNotInvocableException`. Deliberately not a host's error type: what a failed tool call
 should look like is an application's decision, and a library that picked one would be argued with

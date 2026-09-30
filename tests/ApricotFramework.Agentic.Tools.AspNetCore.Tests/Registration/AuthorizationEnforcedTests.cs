@@ -2,6 +2,7 @@ using System.Security.Claims;
 using ApricotFramework.Agentic.Tools.AspNetCore.Authorization;
 using ApricotFramework.Agentic.Tools.AspNetCore.Extensions;
 using ApricotFramework.Agentic.Tools.Exceptions;
+using ApricotFramework.Agentic.Tools.Filters;
 using ApricotFramework.Agentic.Tools.Invocation;
 using ApricotFramework.Agentic.Tools.Validators;
 using Microsoft.AspNetCore.Authorization;
@@ -117,7 +118,7 @@ public class AuthorizationEnforcedTests
     }
 
     [Fact]
-    public async Task AnonymousTool_WithoutAddAgentToolAuthorization_DoesNotTripTheWire()
+    public async Task AnonymousTool_WithoutAuthorization_DoesNotTripTheWire()
     {
         // the tripwire is about a gate nothing enforces. a gate the host waived is not one
         var services = new ServiceCollection();
@@ -135,7 +136,7 @@ public class AuthorizationEnforcedTests
     }
 
     [Fact]
-    public async Task GatedTool_WithoutAddAgentToolAuthorization_StopsTheHostRatherThanOpeningIt()
+    public async Task GatedTool_WithoutAuthorization_StopsTheHostRatherThanOpeningIt()
     {
         // the tripwire, and the realistic mistake: forgetting the call. a tool that declares
         // authorization while nothing enforces it is a configuration error, not a permission -
@@ -155,11 +156,11 @@ public class AuthorizationEnforcedTests
             async () => await registry.GetToolsAsync(Probes.Context(host), TestContext.Current.CancellationToken));
 
         Assert.Contains("nothing in this host enforces it", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("AddAgentToolAuthorization", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("WithAuthorization()", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task GatedTool_WithoutAddAgentToolAuthorization_ButWithAMarker_IsLeftAlone()
+    public async Task GatedTool_WithoutAuthorization_ButWithAMarker_IsLeftAlone()
     {
         // a host enforcing authorization its own way says so, and is not lectured about a job
         // somebody else is doing
@@ -169,6 +170,24 @@ public class AuthorizationEnforcedTests
         services.AddAuthorization();
         services.AddAgentToolsCore();
         services.AddSingleton<AgentToolEnforcementMarker>();
+        services.AddAgentTool<GatedProbe>();
+
+        var host = services.BuildServiceProvider();
+
+        var registry = host.GetRequiredService<IAgentToolRegistry>();
+
+        Assert.Single(await registry.GetToolsAsync(Probes.Context(host), TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task GatedTool_WithAnAuthorizationFilterOfItsOwn_IsLeftAlone()
+    {
+        // a host enforcing through its own authorization filter has said so by registering it
+        var services = new ServiceCollection();
+
+        services.AddLogging();
+        services.AddAgentToolsCore();
+        services.AddAgentToolAuthorizationFilter<AllowAll>();
         services.AddAgentTool<GatedProbe>();
 
         var host = services.BuildServiceProvider();
@@ -189,7 +208,7 @@ public class AuthorizationEnforcedTests
         services.AddAgentToolsCore();
         services.AddAgentTool<UngatedProbe>();
 
-        Assert.Empty(services.BuildServiceProvider().GetServices<IAgentToolFilter>());
+        Assert.Empty(services.BuildServiceProvider().GetServices<IAgentToolAuthorizationFilter>());
     }
 
     [Fact]
@@ -200,7 +219,7 @@ public class AuthorizationEnforcedTests
         var services = Host();
 
         services.AddAgentTool<UngatedProbe>();
-        services.RemoveAll<IAgentToolFilter>();
+        services.RemoveAll<IAgentToolAuthorizationFilter>();
 
         var host = services.BuildServiceProvider();
 
@@ -224,5 +243,13 @@ public class AuthorizationEnforcedTests
 
         Assert.Single(await host.GetRequiredService<IAgentToolRegistry>()
             .GetToolsAsync(Probes.Context(host), TestContext.Current.CancellationToken));
+    }
+
+    /// <summary>An authorization filter a host wrote itself.</summary>
+    private sealed class AllowAll : IAgentToolAuthorizationFilter
+    {
+        /// <inheritdoc />
+        public ValueTask<AgentToolAuthorizationDecision> AuthorizeAsync(AgentToolDescriptor tool, AgentToolContext context, CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(AgentToolAuthorizationDecision.Allow());
     }
 }

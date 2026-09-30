@@ -29,18 +29,18 @@ half out of the hosting half was not a move anyone's `using` block noticed.
 | | |
 | --- | --- |
 | *(root)* | `AgentTool`, `IAgentToolDeclaration`, `AgentToolDeclaration`, `AgentToolDescriptor`, `AgentToolContext`, `IAgentToolSourceContext`, `AgentToolAnnotations`, `AgentToolInvocation`, `AgentToolLabels`, `AgentToolProgress`, `AgentToolResultKind`, and the four attributes |
-| `.Exceptions` | `AgentToolException` and its five derivatives |
+| `.Exceptions` | `AgentToolException` and its derivatives |
 | `.Serialization` | `AgentToolJson` |
 
 ## ApricotFramework.Agentic.Tools
 
 | | |
 | --- | --- |
-| *(root)* | `IAgentToolsBuilder`, `IAgentToolSource`, `IAgentToolRegistry`, `IAgentToolInvoker`, `IAgentToolExecutor`, `IAgentToolContextFactory`, `IAgentToolFilter`, `IAgentToolValidator` |
+| *(root)* | `IAgentToolsBuilder`, `IAgentToolSource`, `IAgentToolRegistry`, `IAgentToolInvoker`, `IAgentToolExecutor`, `IAgentToolContextFactory`, `IAgentToolFilter`, `IAgentToolAuthorizationFilter`, `IAgentToolValidator` |
 | `.Adapters` | `ScopedAgentTool` — a hand-written tool's declaration read once, an instance built per call |
 | `.Discovery` | `AgentToolDiscovery` |
 | `.Extensions` | The registration and scanning extension methods |
-| `.Filters` | `AgentToolFilterDecision` |
+| `.Filters` | `AgentToolFilterDecision`, `AgentToolAuthorizationDecision` |
 | `.Invocation` | `AgentToolExecutor`, `AgentToolInvoker`, their delegating bases, `DefaultAgentToolContextFactory` |
 | `.Registration` | `IAgentToolConventionBuilder`, `AgentToolRegistrationOptions` |
 | `.Registry` | `AgentToolRegistry`, `AgentToolStartupValidation` |

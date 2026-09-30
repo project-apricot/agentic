@@ -3,19 +3,6 @@ namespace ApricotFramework.Agentic.Tools.Filters;
 /// <summary>
 /// What a filter decided about one tool.
 /// </summary>
-/// <remarks>
-/// <para>
-/// One outcome rather than two. A denied tool is left out of a listing and refused on invocation,
-/// which covers everything a filter is for - authorization, a surface a tool is not declared for,
-/// an allowlist, a feature that is off.
-/// </para>
-/// <para>
-/// What it deliberately cannot express is "listed, but not callable right now". A budget that has
-/// run out, a call awaiting approval, or a rate limit are about the call rather than about what
-/// exists, and belong in an <see cref="IAgentToolInvoker"/> wrapper. Reshaping a listing - capping
-/// it, sorting it, hiding something deprecated but still callable - belongs there too.
-/// </para>
-/// </remarks>
 public readonly struct AgentToolFilterDecision : IEquatable<AgentToolFilterDecision>
 {
     /// <summary>
@@ -36,8 +23,9 @@ public readonly struct AgentToolFilterDecision : IEquatable<AgentToolFilterDecis
     /// Gets why the tool was denied, or null where it was not.
     /// </summary>
     /// <remarks>
-    /// Carried because it is what a refusal says and what a log line records. A tool that is
-    /// simply absent, with nobody able to say which filter removed it, is the failure nobody can
+    /// Carried for the log, not the caller. A caller refused by a filter is told the tool is not
+    /// offered, because to them, it is not; this is what lets whoever reads the log say which filter
+    /// removed it - a tool simply absent, with nobody able to say why, is the failure nobody can
     /// diagnose.
     /// </remarks>
     public string? Reason { get; }

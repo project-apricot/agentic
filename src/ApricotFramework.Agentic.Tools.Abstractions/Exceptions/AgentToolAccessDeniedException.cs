@@ -1,11 +1,8 @@
 namespace ApricotFramework.Agentic.Tools.Exceptions;
 
 /// <summary>
-/// The caller is not permitted to invoke the tool.
+/// The tool exists and is offered to this caller, but the caller is not permitted to use it.
 /// </summary>
-/// <remarks>
-/// Worth reporting so it reads as a decision rather than a fault, or a model retries it. A bare failure is an invitation to try again, and an agent will accept.
-/// </remarks>
 public class AgentToolAccessDeniedException : AgentToolException
 {
     /// <summary>

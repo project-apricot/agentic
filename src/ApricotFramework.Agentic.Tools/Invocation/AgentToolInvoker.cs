@@ -7,8 +7,12 @@ using System.Text.Json;
 namespace ApricotFramework.Agentic.Tools.Invocation;
 
 /// <summary>
-/// Filters what a caller may reach, then runs it.
+/// Decides what a caller can see and may use, then runs it.
 /// </summary>
+/// <remarks>
+/// Two layers, in a fixed order that registration cannot change: every
+/// <see cref="IAgentToolFilter"/> first, then every <see cref="IAgentToolAuthorizationFilter"/>.
+/// </remarks>
 public class AgentToolInvoker : IAgentToolInvoker
 {
     /// <summary>
@@ -17,34 +21,41 @@ public class AgentToolInvoker : IAgentToolInvoker
     private readonly IAgentToolRegistry registry;
 
     /// <summary>
-    /// What decides whether a caller may reach a tool.
+    /// What decides whether a caller can see a tool.
     /// </summary>
     private readonly IReadOnlyList<IAgentToolFilter> filters;
+
+    /// <summary>
+    /// What decides whether a caller may use a tool they can see.
+    /// </summary>
+    private readonly IReadOnlyList<IAgentToolAuthorizationFilter> authorizationFilters;
 
     /// <summary>
     /// Creates a new instance of the invoker.
     /// </summary>
     /// <param name="registry">Every tool offered.</param>
-    /// <param name="filters">What decides whether a caller may reach a tool.</param>
+    /// <param name="filters">What decides whether a caller can see a tool.</param>
+    /// <param name="authorizationFilters">What decides whether a caller may use a tool they can see.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="registry"/> is null.</exception>
     /// <remarks>
-    /// No filters at all mean every tool is offered to every caller. That is a host saying there
+    /// Neither layer at all means every tool is offered to every caller. That is a host saying there
     /// is nothing to decide, which is true of a command line tool and false of almost everything
     /// else.
     /// </remarks>
-    public AgentToolInvoker(IAgentToolRegistry registry, IEnumerable<IAgentToolFilter>? filters = null)
+    public AgentToolInvoker(IAgentToolRegistry registry, IEnumerable<IAgentToolFilter>? filters = null, IEnumerable<IAgentToolAuthorizationFilter>? authorizationFilters = null)
     {
         ArgumentNullException.ThrowIfNull(registry);
 
         this.registry = registry;
         this.filters = filters is null ? [] : [.. filters];
+        this.authorizationFilters = authorizationFilters is null ? [] : [.. authorizationFilters];
     }
 
     /// <inheritdoc />
     /// <remarks>
     /// <para>
-    /// Filtered by the same filters that would refuse the call, so a tool listed here is one they
-    /// accept.
+    /// Put to the same two layers that would refuse the call, so a tool listed here is one of the call
+    /// accepts.
     /// </para>
     /// <para>
     /// This is ergonomics rather than control: enforcement is <see cref="InvokeAsync"/> and
@@ -63,7 +74,8 @@ public class AgentToolInvoker : IAgentToolInvoker
 
         foreach (var tool in tools)
         {
-            if ((await this.EvaluateAsync(tool, context, cancellationToken).ConfigureAwait(false)).IsAllowed)
+            if ((await this.FilterAsync(tool, context, cancellationToken).ConfigureAwait(false)).IsAllowed
+                && (await this.AuthorizeAsync(tool, context, cancellationToken).ConfigureAwait(false)).IsAllowed)
             {
                 available.Add(tool);
             }
@@ -74,7 +86,7 @@ public class AgentToolInvoker : IAgentToolInvoker
 
     /// <inheritdoc />
     /// <remarks>
-    /// The filters run before the first item, so a caller that is refused receives nothing rather
+    /// Both layers run before the first item, so a caller that is refused receives nothing rather
     /// than a truncated result.
     /// </remarks>
     public async IAsyncEnumerable<string> InvokeAsync(string name, string? argumentsJson, AgentToolContext context, [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -131,7 +143,7 @@ public class AgentToolInvoker : IAgentToolInvoker
     private static string Write(object? value, AIFunction function) => JsonSerializer.Serialize(value, function.JsonSerializerOptions);
 
     /// <summary>
-    /// Finds the tool, puts it to the filters, and insists it can be run here.
+    /// Finds the tool, puts it to both layers in order, and insists it can be run here.
     /// </summary>
     /// <param name="name">The tool to find.</param>
     /// <param name="context">Who is asking.</param>
@@ -141,18 +153,27 @@ public class AgentToolInvoker : IAgentToolInvoker
     {
         var descriptor = await this.registry.RequireAsync(name, context, cancellationToken).ConfigureAwait(false);
 
-        var decision = await this.EvaluateAsync(descriptor, context, cancellationToken).ConfigureAwait(false);
+        // scope first. a tool the caller cannot see is not there, so it is refused as not-found and
+        // authorization is never asked about it
+        var scope = await this.FilterAsync(descriptor, context, cancellationToken).ConfigureAwait(false);
 
-        if (!decision.IsAllowed)
+        if (!scope.IsAllowed)
         {
-            throw new AgentToolAccessDeniedException(decision.Reason!);
+            throw new AgentToolFilteredException(descriptor.Name, scope.Reason!);
+        }
+
+        var permission = await this.AuthorizeAsync(descriptor, context, cancellationToken).ConfigureAwait(false);
+
+        if (!permission.IsAllowed)
+        {
+            throw new AgentToolAccessDeniedException(permission.Reason!);
         }
 
         return descriptor.AsFunction() ?? throw new AgentToolNotInvocableException($"The tool '{descriptor.Name}' is declared here but nothing here can run it.");
     }
 
     /// <summary>
-    /// Puts a tool to every filter, stopping at the first refusal.
+    /// Asks every filter whether the caller can see the tool, stopping at the first refusal.
     /// </summary>
     /// <param name="tool">The tool in question.</param>
     /// <param name="context">Who is asking.</param>
@@ -163,7 +184,7 @@ public class AgentToolInvoker : IAgentToolInvoker
     /// than all of them, which is the right amount: the others may only apply because the first
     /// did.
     /// </remarks>
-    private async ValueTask<AgentToolFilterDecision> EvaluateAsync(AgentToolDescriptor tool, AgentToolContext context, CancellationToken cancellationToken)
+    private async ValueTask<AgentToolFilterDecision> FilterAsync(AgentToolDescriptor tool, AgentToolContext context, CancellationToken cancellationToken)
     {
         foreach (var filter in this.filters)
         {
@@ -176,5 +197,27 @@ public class AgentToolInvoker : IAgentToolInvoker
         }
 
         return AgentToolFilterDecision.Allow();
+    }
+
+    /// <summary>
+    /// Asks every authorization filter whether the caller may use the tool, stopping at the first refusal.
+    /// </summary>
+    /// <param name="tool">The tool in question.</param>
+    /// <param name="context">Who is asking.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task containing the decision.</returns>
+    private async ValueTask<AgentToolAuthorizationDecision> AuthorizeAsync(AgentToolDescriptor tool, AgentToolContext context, CancellationToken cancellationToken)
+    {
+        foreach (var filter in this.authorizationFilters)
+        {
+            var decision = await filter.AuthorizeAsync(tool, context, cancellationToken).ConfigureAwait(false);
+
+            if (!decision.IsAllowed)
+            {
+                return decision;
+            }
+        }
+
+        return AgentToolAuthorizationDecision.Allow();
     }
 }

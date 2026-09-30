@@ -9,6 +9,11 @@ namespace ApricotFramework.Agentic.Tools.AspNetCore.Authorization;
 /// </summary>
 /// <remarks>
 /// <para>
+/// An <see cref="IAgentToolAuthorizationFilter"/>, not an <see cref="IAgentToolFilter"/>: it runs
+/// only after every filter has decided the caller can see the tool, and its refusal is reported as
+/// access denied rather than not-found.
+/// </para>
+/// <para>
 /// The reason a tool can be gated the way an endpoint is. The attribute on the tool is the same
 /// attribute that would sit on a controller action, it resolves to the same requirements, and
 /// those requirements reach the same handlers over the same stores - so a tool and the endpoint
@@ -20,8 +25,8 @@ namespace ApricotFramework.Agentic.Tools.AspNetCore.Authorization;
 /// The host's <see cref="AuthorizationOptions.FallbackPolicy"/> is deliberately <em>not</em>
 /// consulted: it belongs to endpoints, the transport endpoint carrying these calls has already been
 /// through it, and applying it again per tool would gate a tool on a policy written for a route.
-/// A host wanting every tool gated says so on the tools - or adds a filter of its own, which is
-/// what filters are for.
+/// A host wanting every tool gated says so on the tools - or adds an authorization filter of its
+/// own with <c>AddAgentToolAuthorizationFilter</c>.
 /// </para>
 /// <para>
 /// <see cref="IAllowAnonymous"/> waives whatever else the registration declares, so
@@ -40,7 +45,7 @@ namespace ApricotFramework.Agentic.Tools.AspNetCore.Authorization;
 /// anything destructive to a given caller, say - without this class knowing that is happening.
 /// </para>
 /// </remarks>
-public sealed class AuthorizationAgentToolFilter : IAgentToolFilter
+public sealed class AuthorizationAgentToolFilter : IAgentToolAuthorizationFilter
 {
     /// <summary>
     /// The decision point.
@@ -68,7 +73,7 @@ public sealed class AuthorizationAgentToolFilter : IAgentToolFilter
     }
 
     /// <inheritdoc />
-    public async ValueTask<AgentToolFilterDecision> EvaluateAsync(AgentToolDescriptor tool, AgentToolContext context, CancellationToken cancellationToken = default)
+    public async ValueTask<AgentToolAuthorizationDecision> AuthorizeAsync(AgentToolDescriptor tool, AgentToolContext context, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(tool);
         ArgumentNullException.ThrowIfNull(context);
@@ -79,7 +84,7 @@ public sealed class AuthorizationAgentToolFilter : IAgentToolFilter
 
         if (requirements.Count == 0)
         {
-            return AgentToolFilterDecision.Allow();
+            return AgentToolAuthorizationDecision.Allow();
         }
 
         var user = context.User ?? new ClaimsPrincipal(new ClaimsIdentity());
@@ -89,7 +94,7 @@ public sealed class AuthorizationAgentToolFilter : IAgentToolFilter
         var result = await this.authorizationService.AuthorizeAsync(user, tool, requirements).ConfigureAwait(false);
 
         return result.Succeeded
-            ? AgentToolFilterDecision.Allow()
-            : AgentToolFilterDecision.Deny($"The caller does not satisfy what the tool '{tool.Name}' requires.");
+            ? AgentToolAuthorizationDecision.Allow()
+            : AgentToolAuthorizationDecision.Deny($"The caller does not satisfy what the tool '{tool.Name}' requires.");
     }
 }

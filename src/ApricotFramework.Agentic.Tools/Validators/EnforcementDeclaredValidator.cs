@@ -50,7 +50,8 @@ public sealed class EnforcementDeclaredValidator(AgentToolEnforcementMarker? mar
             {
                 throw new AgentToolDeclarationException(
                     $"The tool '{tool.Name}' carries authorization, but nothing in this host enforces it. " +
-                    "Call AddAgentToolAuthorization(), or register an AgentToolEnforcementMarker beside whatever enforces it instead.");
+                    "Call WithAuthorization(), add an IAgentToolAuthorizationFilter with AddAgentToolAuthorizationFilter(), " +
+                    "or register an AgentToolEnforcementMarker beside whatever enforces it instead.");
             }
         }
     }

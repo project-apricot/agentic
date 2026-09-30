@@ -15,6 +15,9 @@ public class AgentToolInvokerTests
     private static AgentToolInvoker Invoker(params IAgentToolFilter[] filters) =>
         new(new AgentToolRegistry([StaticAgentToolSource.For(new SingleProbe(), new SequenceProbe(), new FailingSequenceProbe())]), filters);
 
+    private static AgentToolInvoker Authorizing(params IAgentToolAuthorizationFilter[] authorizationFilters) =>
+        new(new AgentToolRegistry([StaticAgentToolSource.For(new SingleProbe(), new SequenceProbe(), new FailingSequenceProbe())]), null, authorizationFilters);
+
     private static AgentToolContext Caller() => Probes.Context();
 
     [Fact]
@@ -67,7 +70,7 @@ public class AgentToolInvokerTests
         var filter = new RefuseEverything();
 
         await Assert.ThrowsAsync<AgentToolAccessDeniedException>(
-            () => Invoker(filter).InvokeCompleteAsync("probe_items_get", """{"id":7}""", Caller(), TestContext.Current.CancellationToken));
+            () => Authorizing(filter).InvokeCompleteAsync("probe_items_get", """{"id":7}""", Caller(), TestContext.Current.CancellationToken));
 
         Assert.Equal(1, filter.Calls);
     }
@@ -75,7 +78,7 @@ public class AgentToolInvokerTests
     [Fact]
     public async Task InvokeAsync_AuthorizerRefuses_YieldsNothing()
     {
-        var invoker = Invoker(new RefuseEverything());
+        var invoker = Authorizing(new RefuseEverything());
 
         await Assert.ThrowsAsync<AgentToolAccessDeniedException>(async () =>
         {
@@ -134,17 +137,17 @@ public class AgentToolInvokerTests
     }
 
     /// <summary>A filter that refuses, and counts.</summary>
-    private sealed class RefuseEverything : IAgentToolFilter
+    private sealed class RefuseEverything : IAgentToolAuthorizationFilter
     {
         /// <summary>Gets how many times it was consulted.</summary>
         public int Calls { get; private set; }
 
         /// <inheritdoc />
-        public ValueTask<AgentToolFilterDecision> EvaluateAsync(AgentToolDescriptor tool, AgentToolContext context, CancellationToken cancellationToken = default)
+        public ValueTask<AgentToolAuthorizationDecision> AuthorizeAsync(AgentToolDescriptor tool, AgentToolContext context, CancellationToken cancellationToken = default)
         {
             this.Calls++;
 
-            return ValueTask.FromResult(AgentToolFilterDecision.Deny("no"));
+            return ValueTask.FromResult(AgentToolAuthorizationDecision.Deny("no"));
         }
     }
 }

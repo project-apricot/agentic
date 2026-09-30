@@ -83,9 +83,10 @@ tool here is gated: a tool declaring nothing would be listed, the way an endpoin
 `[Authorize]` is reachable.
 
 **`GET /tools?surface=mcp` as an admin.** The two destructive tools vanish from the listing,
-because they declare themselves internal-only — and invoking one on that surface is refused with
-`403` and a reason naming the surface. The same filter answers both questions, which is why the
-listing and the gate cannot disagree.
+because they declare themselves internal-only — and invoking one on that surface is a `404`, as
+for a name nobody declared: off that surface the tool does not exist, so there is nothing to
+authorize. The same filter answers both questions, which is why the listing and the gate cannot
+disagree.
 
 ## And in the console example
 

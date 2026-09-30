@@ -43,7 +43,7 @@ public static class AgentToolServiceCollectionExtensions
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IAgentToolSource, RegistrationAgentToolSource>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IAgentToolValidator, EnforcementDeclaredValidator>());
         services.TryAddSingleton<IAgentToolRegistry, AgentToolRegistry>();
-        services.TryAddSingleton<IAgentToolInvoker, AgentToolInvoker>();
+        services.TryAddScoped<IAgentToolInvoker, AgentToolInvoker>();
         services.TryAddSingleton<IAgentToolExecutor, AgentToolExecutor>();
         services.TryAddSingleton<IAgentToolContextFactory, DefaultAgentToolContextFactory>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentToolStartupValidation>());
@@ -246,7 +246,7 @@ public static class AgentToolServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Adds something that decides whether a caller may reach a tool.
+    /// Adds something that decides whether a caller can see a tool.
     /// </summary>
     /// <typeparam name="TFilter">The filter to add.</typeparam>
     /// <param name="services">The service collection.</param>
@@ -254,8 +254,15 @@ public static class AgentToolServiceCollectionExtensions
     /// <returns>The same collection, for chaining.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="services"/> is null.</exception>
     /// <remarks>
-    /// Applies to the listing and the call alike. Scoped is available because the executor
-    /// resolves the invoker from the call's own scope, so a filter reading per-call state works.
+    /// <para>
+    /// Scope, not permission: a tool a filter refuses is left out of the listing and, if named
+    /// anyway, refused as not-found. For a permission check use
+    /// <see cref="AddAgentToolAuthorizationFilter{TFilter}"/>, which runs after every filter.
+    /// </para>
+    /// <para>
+    /// Scoped is available because the invoker is resolved from the call's own scope, so a filter
+    /// reading per-call state gets a fresh one each call.
+    /// </para>
     /// </remarks>
     public static IServiceCollection AddAgentToolFilter<TFilter>(this IServiceCollection services, ServiceLifetime lifetime = ServiceLifetime.Singleton)
         where TFilter : class, IAgentToolFilter
@@ -263,6 +270,36 @@ public static class AgentToolServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
 
         services.Add(ServiceDescriptor.Describe(typeof(IAgentToolFilter), typeof(TFilter), lifetime));
+
+        return services;
+    }
+
+    /// <summary>
+    /// Adds something that decides whether a caller may use a tool they can see.
+    /// </summary>
+    /// <typeparam name="TFilter">The authorization filter to add.</typeparam>
+    /// <param name="services">The service collection.</param>
+    /// <param name="lifetime">How long one lives, defaulting to the life of the process.</param>
+    /// <returns>The same collection, for chaining.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="services"/> is null.</exception>
+    /// <remarks>
+    /// <para>
+    /// For a host enforcing permission its own way - a table, a service this library has never
+    /// heard of. The attribute-based one is <c>WithAuthorization()</c> in the ASP.NET Core package.
+    /// Runs after every filter, and a refusal is reported as access denied with its reason.
+    /// </para>
+    /// <para>
+    /// Registering one also satisfies the tripwire, because registering an authorization filter is
+    /// the statement that something enforces the gates a tool declares.
+    /// </para>
+    /// </remarks>
+    public static IServiceCollection AddAgentToolAuthorizationFilter<TFilter>(this IServiceCollection services, ServiceLifetime lifetime = ServiceLifetime.Singleton)
+        where TFilter : class, IAgentToolAuthorizationFilter
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.Add(ServiceDescriptor.Describe(typeof(IAgentToolAuthorizationFilter), typeof(TFilter), lifetime));
+        services.TryAddSingleton<AgentToolEnforcementMarker>();
 
         return services;
     }

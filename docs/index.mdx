@@ -54,9 +54,9 @@ session at once — and what lets a tool that is really a call to another servic
 registry beside one written here.
 
 **What a permission is.** Where permissions live, how they are named, and what decides them are
-answered by the application already. `IAgentToolFilter` is the whole of what this library knows
-about the subject, and the ASP.NET Core package implements one by reading the authorization
-attributes a tool declares and handing them to the host's own pipeline.
+answered by the application already. `IAgentToolAuthorizationFilter` is the whole of what this
+library knows about the subject, and the ASP.NET Core package implements one by reading the
+authorization attributes a tool declares and handing them to the host's own pipeline.
 
 **Who the caller is.** A host answers that once, in an `IAgentToolContextFactory`, and every
 surface goes through it. No endpoint, MCP handler or gRPC method builds a caller of its own.

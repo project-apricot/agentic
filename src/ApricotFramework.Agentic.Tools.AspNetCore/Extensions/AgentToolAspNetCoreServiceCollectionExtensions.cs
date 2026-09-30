@@ -84,7 +84,7 @@ public static class AgentToolAspNetCoreServiceCollectionExtensions
 
         builder.Services.TryAddSingleton<AgentToolAuthorizationPolicy>();
         builder.Services.TryAddSingleton<AgentToolEnforcementMarker>();
-        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IAgentToolFilter, AuthorizationAgentToolFilter>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IAgentToolAuthorizationFilter, AuthorizationAgentToolFilter>());
 
         return builder;
     }

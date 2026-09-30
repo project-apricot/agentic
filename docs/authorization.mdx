@@ -5,19 +5,36 @@ description: A tool is gated by the attribute that would gate an endpoint, decid
 
 # Authorization
 
-This library does not know what a permission is. Authorization is one `IAgentToolFilter` among
-however many a host registers:
+This library does not know what a permission is. It knows two questions a call has to get past,
+asked in a fixed order:
+
+1. **Does this tool exist for this caller?** An `IAgentToolFilter` answers — a surface, a tenant,
+   a feature flag. A refusal reads as *not found*: `AgentToolFilteredException`, which is an
+   `AgentToolNotFoundException`, with a message that says no more than an unknown name would.
+2. **May this caller run it?** An `IAgentToolAuthorizationFilter` answers. A refusal reads as
+   *access denied*: `AgentToolAccessDeniedException`, carrying the reason.
 
 ```csharp
-public interface IAgentToolFilter
+public interface IAgentToolAuthorizationFilter
 {
-    ValueTask<AgentToolFilterDecision> EvaluateAsync(
+    ValueTask<AgentToolAuthorizationDecision> AuthorizeAsync(
         AgentToolDescriptor tool, AgentToolContext context, CancellationToken cancellationToken = default);
 }
 ```
 
-One decision covers both halves. A tool the filter denies is left out of a listing and refused on
-the call, so a caller is never offered something that then refuses them.
+Every filter runs before any authorization filter, whatever order they were registered in, and a
+tool a filter refused is never shown to authorization at all. Asking would be wrong twice over: a
+`403` for a tool out of scope tells the caller it exists, and an authorization handler that logs or
+spends a budget would do so for a tool the caller could not have reached.
+
+Keeping them apart is also what lets a refusal mean something. A model told *not found* stops
+looking for the tool; told *access denied*, it can tell the user why. Folding both into one
+decision would have to pick one answer for two different situations.
+
+Both are applied the same way — to the listing and to the call — so a caller is never offered
+something that then refuses them. Register either with
+`AddAgentToolFilter<T>()` / `AddAgentToolAuthorizationFilter<T>()`, singleton by default, scoped
+when the decision reads per-call state.
 
 ## The attribute implementation
 
@@ -94,7 +111,7 @@ authorization metadata, and it is the only answer that lets a public tool sit be
 `AuthorizationOptions.FallbackPolicy` is deliberately **not** consulted. It governs endpoints; the
 transport endpoint carrying these calls has already been through it, and applying it a second time
 per tool would gate a tool on a policy written for a route. A host that wants every tool gated says
-so on the tools — or registers a filter of its own, which is what filters are for.
+so on the tools — or registers an authorization filter of its own.
 
 `[AllowAnonymous]` waives whatever else the registration declares, so it beside `[Authorize]` opens
 the tool. ASP.NET Core's semantics, footgun included. It also keeps the tripwire quiet, because a
@@ -107,7 +124,8 @@ authorization while nothing is enforcing it, the registry refuses to compose:
 
 ```
 The tool 'support_tickets_get' carries authorization, but nothing in this host enforces it.
-Call WithAuthorization(), or register an AgentToolEnforcementMarker beside whatever
+Call WithAuthorization(), add an IAgentToolAuthorizationFilter with
+AddAgentToolAuthorizationFilter(), or register an AgentToolEnforcementMarker beside whatever
 enforces it instead.
 ```
 
@@ -122,8 +140,10 @@ looking for metadata implementing an interface named `IAuthorizeData` or
 check is not pretty. The alternatives were worse: a dependency in the console path, or a tripwire
 registered by the very call it exists to catch you forgetting.
 
-A host enforcing authorization its own way — a filter reading a table, a service this library has
-never heard of — says so by registering the marker beside whatever does the enforcing:
+A host enforcing authorization its own way — a table, a service this library has never heard of —
+usually does it in an `IAgentToolAuthorizationFilter`, and registering one with
+`AddAgentToolAuthorizationFilter<T>()` is enough to satisfy the tripwire. Where enforcement lives
+outside the invoker altogether, say so with the marker:
 
 ```csharp
 builder.Services.AddSingleton<AgentToolEnforcementMarker>();
@@ -138,25 +158,26 @@ left free to permit a call made by nobody, which is how a worker or a scheduler 
 
 ## The listing and the gate
 
-One filter answers both questions, and that is the point rather than a convenience.
+The same two layers answer both questions, and that is the point rather than a convenience.
 
 ```csharp
 var offered = await executor.GetAvailableToolsAsync(cancellationToken);      // what could they call
 await executor.InvokeCompleteAsync(name, argumentsJson, cancellationToken);  // let them call it
 ```
 
-The listing filters with the same filters the call enforces, so a caller is never shown a tool
-that then refuses them, nor refused one it was shown. A separate listing rule would be a second
-implementation of the same decision, and the two would drift.
+A tool is listed only when every filter and every authorization filter allows it, and a call is
+run only under the same condition, so a caller is never shown a tool that then refuses them, nor
+refused one it was shown. A separate listing rule would be a second implementation of the same
+decision, and the two would drift.
 
 It lives on the invoker rather than the registry because the invoker is the one place holding both
-the tools and the decision. The registry knows a caller only well enough to ask its sources, and
+the tools and the decisions. The registry knows a caller only well enough to ask its sources, and
 keeping it that way is what stops the filtering from happening somewhere it cannot be kept honest.
 
-**The listing is ergonomics; the call is enforcement.** A filter whose answer moves — keyed on the
-time of day, a budget being spent — can disagree with itself between the two, and where it does,
-showing a tool that then refuses is the better failure: a false positive costs one refused call,
-where a tool silently missing is one nobody can diagnose. Enforcement on invocation is
+**The listing is ergonomics; the call is enforcement.** A decision whose answer moves — keyed on
+the time of day, a budget being spent — can disagree with itself between the two, and where it
+does, showing a tool that then refuses is the better failure: a false positive costs one refused
+call, where a tool silently missing is one nobody can diagnose. Enforcement on invocation is
 unconditional and there is no setting for it.
 
 That is also why the tools a chat client is handed re-enter the executor when called. A listing
@@ -221,6 +242,9 @@ public sealed class SurfaceAgentToolFilter : IAgentToolFilter
     }
 }
 ```
+
+It is a filter rather than an authorization filter because a tool kept off a surface does not exist
+there: invoking it by name on that surface is *not found*, exactly as for a name nobody declared.
 
 Reading it as `(context as …)?.Surface` keeps a filter working when a host passes a plain
 `AgentToolContext` — a test, a worker, another front end. `AgentToolContext` is not sealed for

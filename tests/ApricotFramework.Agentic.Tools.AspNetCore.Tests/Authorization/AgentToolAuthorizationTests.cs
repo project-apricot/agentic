@@ -41,8 +41,8 @@ public class AgentToolAuthorizationTests
     {
         var declared = await host.GetRequiredService<IAgentToolRegistry>().RequireAsync(tool, Probes.Context(host), TestContext.Current.CancellationToken);
 
-        var decision = await host.GetServices<IAgentToolFilter>().OfType<AuthorizationAgentToolFilter>().Single()
-            .EvaluateAsync(declared, Asking(user), TestContext.Current.CancellationToken);
+        var decision = await host.GetServices<IAgentToolAuthorizationFilter>().OfType<AuthorizationAgentToolFilter>().Single()
+            .AuthorizeAsync(declared, Asking(user), TestContext.Current.CancellationToken);
 
         if (!decision.IsAllowed)
         {

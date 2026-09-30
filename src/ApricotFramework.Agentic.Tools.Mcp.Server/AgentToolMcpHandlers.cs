@@ -86,7 +86,7 @@ public sealed class AgentToolMcpHandlers(IAgentToolExecutor executor)
     /// <param name="function">The tool.</param>
     /// <returns>The protocol's tool.</returns>
     /// <remarks>
-    /// The behaviour is stated rather than left to be inferred: a hint the protocol treats as
+    /// The behavior is stated rather than left to be inferred: a hint the protocol treats as
     /// advisory is still what a client decides whether to confirm on, and an unstated one reads
     /// as a tool that never said.
     /// </remarks>
@@ -101,9 +101,6 @@ public sealed class AgentToolMcpHandlers(IAgentToolExecutor executor)
             Destructive = declaration?.IsDestructive,
             Idempotent = declaration?.IsIdempotent,
             OpenWorld = declaration?.IsOpenWorld,
-
-            // the result already matches the output schema the declaration published, so a
-            // client that can read structured content should be given it rather than prose
             UseStructuredContent = function.ReturnJsonSchema is not null
         });
     }

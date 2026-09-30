@@ -52,7 +52,7 @@ public class AgentToolAvailabilityTests
             {
                 await invoker.InvokeCompleteAsync(tool.Name, null, Probes.Context(), TestContext.Current.CancellationToken);
             }
-            catch (AgentToolAccessDeniedException)
+            catch (AgentToolFilteredException)
             {
                 accepted = false;
             }
@@ -74,15 +74,29 @@ public class AgentToolAvailabilityTests
     }
 
     [Fact]
-    public async Task InvokeAsync_DeniedTool_CarriesTheFiltersReason()
+    public async Task InvokeAsync_FilteredTool_KeepsTheReasonForTheLogAndOutOfTheMessage()
     {
-        // the reason is what a refusal says and what a log records; a tool simply absent, with
-        // nobody able to say which filter removed it, is the failure nobody can diagnose
-        var exception = await Assert.ThrowsAsync<AgentToolAccessDeniedException>(
+        // reported separately: the caller is told what a missing tool would tell them, because to
+        // them it is missing. the filter's reason is kept for whoever reads the log - a tool simply
+        // absent, with nobody able to say which filter removed it, is the failure nobody can diagnose
+        var exception = await Assert.ThrowsAsync<AgentToolFilteredException>(
             () => Invoker([Probe("probe_items_two")], new AllowOnly("probe_items_one"))
                 .InvokeCompleteAsync("probe_items_two", null, Probes.Context(), TestContext.Current.CancellationToken));
 
-        Assert.Contains("not on the list", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("not on the list", exception.Reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("not on the list", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("No tool is offered as 'probe_items_two'.", exception.Message);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_FilteredTool_IsANotFound()
+    {
+        // so every surface that already maps not-found does the right thing without a new case
+        var exception = await Assert.ThrowsAsync<AgentToolFilteredException>(
+            () => Invoker([Probe("probe_items_two")], new AllowOnly("probe_items_one"))
+                .InvokeCompleteAsync("probe_items_two", null, Probes.Context(), TestContext.Current.CancellationToken));
+
+        Assert.IsAssignableFrom<AgentToolNotFoundException>(exception);
     }
 
     [Fact]
@@ -93,17 +107,17 @@ public class AgentToolAvailabilityTests
             new AllowOnly("probe_items_one"),
             new DenyEverything("the second filter said no"));
 
-        var exception = await Assert.ThrowsAsync<AgentToolAccessDeniedException>(
+        var exception = await Assert.ThrowsAsync<AgentToolFilteredException>(
             () => invoker.InvokeCompleteAsync("probe_items_one", null, Probes.Context(), TestContext.Current.CancellationToken));
 
-        Assert.Equal("the second filter said no", exception.Message);
+        Assert.Equal("the second filter said no", exception.Reason);
     }
 
     [Fact]
     public async Task GetAvailableToolsAsync_NoFiltersAtAll_OffersEverything()
     {
         // a host saying there is nothing to decide. true of a command line tool, false of almost
-        // everything else - which is why the ASP.NET Core package registers one for you
+        // everything else
         Assert.Equal(2, (await Invoker([Probe("probe_items_one"), Probe("probe_items_two")])
             .GetAvailableToolsAsync(Probes.Context(), TestContext.Current.CancellationToken)).Count);
     }
