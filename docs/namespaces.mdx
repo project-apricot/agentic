@@ -1,0 +1,90 @@
+---
+title: Namespaces
+description: What lives at the root, and what is grouped away from it.
+---
+
+# Namespaces
+
+One rule: **the root namespace holds everything you touch to declare a tool or to type a
+dependency on one.** Anything else is grouped by what it does.
+
+```csharp
+using ApricotFramework.Agentic.Tools;
+```
+
+That one using is enough to write a tool — the attributes, `AgentToolContext`, `AgentTool` for the
+case that needs it, and every abstraction a host would take a dependency on. Registration is
+the one thing behind a second using, because it is a composition-root act rather than an
+authoring one:
+
+```csharp
+using ApricotFramework.Agentic.Tools.Extensions;
+```
+
+The two packages that make up the core share the root namespace, so splitting the declaration
+half out of the hosting half was not a move anyone's `using` block noticed.
+
+## ApricotFramework.Agentic.Tools.Abstractions
+
+| | |
+| --- | --- |
+| *(root)* | `AgentTool`, `IAgentToolDeclaration`, `AgentToolDeclaration`, `AgentToolDescriptor`, `AgentToolContext`, `IAgentToolSourceContext`, `AgentToolAnnotations`, `AgentToolInvocation`, `AgentToolLabels`, `AgentToolProgress`, `AgentToolResultKind`, and the four attributes |
+| `.Exceptions` | `AgentToolException` and its derivatives |
+| `.Serialization` | `AgentToolJson` |
+
+## ApricotFramework.Agentic.Tools
+
+| | |
+| --- | --- |
+| *(root)* | `IAgentToolsBuilder`, `IAgentToolSource`, `IAgentToolRegistry`, `IAgentToolInvoker`, `IAgentToolExecutor`, `IAgentToolContextFactory`, `IAgentToolFilter`, `IAgentToolAuthorizationFilter`, `IAgentToolValidator` |
+| `.Adapters` | `ScopedAgentTool` — a hand-written tool's declaration read once, an instance built per call |
+| `.Discovery` | `AgentToolDiscovery` |
+| `.Extensions` | The registration and scanning extension methods |
+| `.Filters` | `AgentToolFilterDecision`, `AgentToolAuthorizationDecision` |
+| `.Invocation` | `AgentToolExecutor`, `AgentToolInvoker`, their delegating bases, `DefaultAgentToolContextFactory` |
+| `.Registration` | `IAgentToolConventionBuilder`, `AgentToolRegistrationOptions` |
+| `.Registry` | `AgentToolRegistry`, `AgentToolStartupValidation` |
+| `.Sources` | `RegistrationAgentToolSource`, `StaticAgentToolSource`, `CuratingAgentToolSource`, `AgentToolCuration` |
+| `.Validators` | `EnforcementDeclaredValidator` and `AgentToolEnforcementMarker` — the tripwire, and the one thing registered for you — plus `TitleDeclaredValidator`, `DescriptionDeclaredValidator`, `ConsistentBehaviourValidator`, which are not |
+
+## ApricotFramework.Agentic.Tools.AspNetCore
+
+| | |
+| --- | --- |
+| `.Authorization` | `AgentToolAuthorizationMetadata`, `AgentToolAuthorizationAttributes`, `AgentToolAuthorizationPolicy`, `AuthorizationAgentToolFilter` |
+| `.Extensions` | `AddAgentToolsWeb`, `WithAuthorization`, `WithHttpContext`, and the `RequireAuthorization` overloads |
+| `.Invocation` | `HttpAgentToolContextFactory` |
+
+## The transports
+
+| | |
+| --- | --- |
+| `…Tools.Mcp.Client` | `IMcpClientProvider`, `StaticMcpClientProvider`, `McpAgentToolSource`, `IMcpToolInvalidation`, and the options; `.Extensions` for registration |
+| `…Tools.Mcp.Server` | `AgentToolMcpHandlers`; `.Extensions` for `WithAgentTools` |
+| `…Tools.Grpc` | `…Grpc.Contract`, generated — the messages and the two stubs |
+| `…Tools.Grpc.Server` | `AgentToolGrpcService`; `.Extensions` for `MapAgentTools` |
+| `…Tools.Grpc.Client` | `GrpcAgentToolSource`, `RemoteAgentTool`, and the options; `.Extensions` for registration |
+
+Each transport's namespace matches its package exactly, so which package a type came from is
+never a question — which matters most for the two MCP packages, where a host may have only one of
+them.
+
+## Tests follow the same rule
+
+Test folders map to namespaces too, with shared fixtures at the test root and everything else
+under the folder it belongs to. There is no reason for a test project to be organised differently
+from the code it tests, and one rule for the repository is easier to hold than two.
+
+## Three deliberate placements
+
+**The attributes stayed at the root**, alongside `AgentToolLabels`. Both are things a tool author
+writes or calls, and extension methods behind a folder namespace cannot be found by someone who
+does not already know where to look.
+
+**Interfaces stayed at the root even where their implementations moved.** `IAgentToolSource` sits
+beside the base classes while `StaticAgentToolSource` is under `.Sources`, because typing a
+dependency is a more common act than constructing one, and the abstraction is what a host names.
+
+**The declaration and the descriptor are at the root of `Abstractions`**, not behind a folder,
+because a library that only declares tools references that package and nothing else — and
+everything in it is something such a library touches.

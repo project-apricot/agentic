@@ -1,0 +1,23 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ApricotFramework.Agentic.Tools.Abstractions/ApricotFramework.Agentic.Tools.Abstractions.csproj" />
+    <Project Path="src/ApricotFramework.Agentic.Tools/ApricotFramework.Agentic.Tools.csproj" />
+    <Project Path="src/ApricotFramework.Agentic.Tools.AspNetCore/ApricotFramework.Agentic.Tools.AspNetCore.csproj" />
+    <Project Path="src/ApricotFramework.Agentic.Tools.Mcp.Client/ApricotFramework.Agentic.Tools.Mcp.Client.csproj" />
+    <Project Path="src/ApricotFramework.Agentic.Tools.Mcp.Server/ApricotFramework.Agentic.Tools.Mcp.Server.csproj" />
+    <Project Path="src/ApricotFramework.Agentic.Tools.Grpc/ApricotFramework.Agentic.Tools.Grpc.csproj" />
+    <Project Path="src/ApricotFramework.Agentic.Tools.Grpc.Server/ApricotFramework.Agentic.Tools.Grpc.Server.csproj" />
+    <Project Path="src/ApricotFramework.Agentic.Tools.Grpc.Client/ApricotFramework.Agentic.Tools.Grpc.Client.csproj" />
+  </Folder>
+  <Folder Name="/examples/">
+    <Project Path="examples/ApricotFramework.Agentic.Examples.SupportDesk/ApricotFramework.Agentic.Examples.SupportDesk.csproj" />
+    <Project Path="examples/ApricotFramework.Agentic.Examples.Console/ApricotFramework.Agentic.Examples.Console.csproj" />
+    <Project Path="examples/ApricotFramework.Agentic.Examples.Web/ApricotFramework.Agentic.Examples.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <File Path="tests\.editorconfig" />
+    <Project Path="tests/ApricotFramework.Agentic.Tools.Tests/ApricotFramework.Agentic.Tools.Tests.csproj" />
+    <Project Path="tests/ApricotFramework.Agentic.Tools.AspNetCore.Tests/ApricotFramework.Agentic.Tools.AspNetCore.Tests.csproj" />
+    <Project Path="tests/ApricotFramework.Agentic.Tools.Grpc.Tests/ApricotFramework.Agentic.Tools.Grpc.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>ApricotFramework.Agentic.Tools.Grpc.Client</RootNamespace>
+    <Description>Tools from another service, over the apricot.agentic.v1 gRPC contract, as ordinary ApricotFramework.Agentic tools. Lists them per caller so a remote surface that differs by who is asking is reflected here, and invokes point to point rather than through anything in the middle. Takes no view on addressing, deadlines or credentials: those are wired on the client the host registers.</Description>
+    <PackageTags>ai;agent;agentic;tools;grpc;function-calling</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Grpc.Net.ClientFactory" />
+    <PackageReference Include="Microsoft.Extensions.Options" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../ApricotFramework.Agentic.Tools/ApricotFramework.Agentic.Tools.csproj" />
+    <ProjectReference Include="../ApricotFramework.Agentic.Tools.Grpc/ApricotFramework.Agentic.Tools.Grpc.csproj" />
+  </ItemGroup>
+
+</Project>

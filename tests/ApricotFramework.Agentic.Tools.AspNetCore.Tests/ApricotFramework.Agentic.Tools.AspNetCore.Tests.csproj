@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <Using Include="ApricotFramework.Agentic.Tools" />
+    <Using Include="ApricotFramework.Agentic.Tools.Extensions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.mtp" />
+    <PackageReference Include="Microsoft.Testing.Extensions.TrxReport" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/ApricotFramework.Agentic.Tools.AspNetCore/ApricotFramework.Agentic.Tools.AspNetCore.csproj" />
+  </ItemGroup>
+
+</Project>

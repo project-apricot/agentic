@@ -1,0 +1,166 @@
+---
+title: gRPC
+description: The contract every service with an agent lane implements, and the two halves that speak it.
+---
+
+# gRPC
+
+The case MCP does not cover: a fleet of services, each owning some tools, and one host — an MCP
+server, an agent loop — that has to offer all of them.
+
+```bash
+dotnet add package ApricotFramework.Agentic.Tools.Grpc          # the contract, messages only
+dotnet add package ApricotFramework.Agentic.Tools.Grpc.Server   # a service that owns tools
+dotnet add package ApricotFramework.Agentic.Tools.Grpc.Client   # a host that federates them
+```
+
+## The contract
+
+`apricot.agentic.v1`, domain neutral on purpose: every service with an agent lane implements the
+same one, so a consumer needs a single client rather than one per domain. The `.proto` ships
+inside the package under `protos/`, so a service in another language can implement it too.
+
+```proto
+service AgentTools {
+  rpc ListTools       (ListToolsRequest)  returns (ListToolsResponse);
+  rpc InvokeTool      (InvokeToolRequest) returns (InvokeToolResponse);
+  rpc InvokeToolStream (InvokeToolRequest) returns (stream InvokeToolChunk);
+}
+
+message AgentToolDeclaration {
+  string name = 1;
+  string title = 2;
+  string description = 3;
+
+  string input_schema = 4;    // json text
+  string output_schema = 5;   // json text, empty where none
+
+  bool read_only = 6;
+  bool destructive = 7;
+  bool idempotent = 8;
+  bool open_world = 9;
+
+  AgentToolResultKind result_kind = 10;
+  map<string, string> labels = 11;
+}
+```
+
+**Schemas and results are JSON text, never `google.protobuf.Struct`.** A `Struct` carries every
+number as a double, which silently truncates an `Int64` identifier past 2^53 — and a schema is
+something to pass along rather than something to compute on. It is the same reason the schemas are
+generated from .NET types rather than from the protobuf ones: proto3 cannot tell an unset string
+from an empty one, so a schema derived from it tells a model every field is optional.
+
+**What is deliberately not on the wire:** a target service, a resource, a scope. Those are a
+deployment's idea of itself, and this library is unaware of its hosts. A fleet that wants them
+puts them in `labels`, where nothing here interprets them.
+
+## Serving
+
+```csharp
+builder.Services.AddGrpc();          // yours: this library does not call it
+builder.Services.AddAgentToolsWeb();
+builder.Services.AddAgentToolType<TicketTools>();
+
+app.MapAgentTools()
+   .RequireAuthorization();          // whether there is a caller at all
+```
+
+A thin projection and nothing more. Who the caller is, which tools they may reach and what a
+failure means are decided by the executor and its filters, exactly as for an HTTP endpoint or an
+MCP session — so a tool does not get a second, weaker set of rules for having been reached over
+gRPC.
+
+The endpoint is the right place for this host's own authentication: the endpoint decides whether
+there is a caller, and the tools behind it decide what that caller may reach.
+
+`MapAgentTools()` does not call `AddGrpc`, `AddGrpcReflection` or anything else. How a host serves
+gRPC is its own business, and a library that decided would be one more thing to unpick.
+
+### Errors
+
+| Thrown | Status |
+| --- | --- |
+| `AgentToolNotFoundException` | `NotFound` |
+| `AgentToolAccessDeniedException` | `PermissionDenied` |
+| `AgentToolArgumentException` | `InvalidArgument` |
+| `AgentToolNotInvocableException` | `Unimplemented` |
+| anything else | `Internal` |
+
+A failure part way through a stream fails the call rather than closing it quietly, so a caller
+cannot mistake a truncated sequence for a complete one.
+
+## Federating
+
+The client is yours. Register it however this fleet registers a gRPC client — by hand, from
+configuration, through discovery — with its addressing, deadlines, retries, error mapping and
+credentials, none of which belong here. Then say which client reaches which service.
+
+Every service implements the same contract, so the generated `AgentToolsClient` cannot tell them
+apart. Two things can:
+
+**A type per service** — the one to reach for first:
+
+```csharp
+public sealed class BillingAgentToolsClient(CallInvoker invoker) : AgentTools.AgentToolsClient(invoker);
+
+builder.Services.AddGrpcClient<BillingAgentToolsClient>(client => client.Address = new Uri("https://billing.internal"))
+    .AddCallCredentials(…);
+
+builder.Services.AddGrpcAgentTools<BillingAgentToolsClient>(options => options.Prefix = "billing_");
+```
+
+No string has to match in two places, a missing registration fails naming the type to register,
+and it works with registration helpers that name a client after its type — two services, two
+types, two names. The client factory ignores the namespace when it does that, so give each type
+a name of its own rather than the same name in two namespaces.
+
+**A name per service**, for a host that would rather not declare types:
+
+```csharp
+builder.Services.AddGrpcClient<AgentTools.AgentToolsClient>("tickets", client => client.Address = …);
+
+builder.Services.AddGrpcAgentTools("tickets", options => options.Prefix = "tickets_");
+```
+
+One call per service federated, each with its own source and its own options, so one service
+being down costs its tools rather than all of them.
+
+**No client is held.** The factory caches the channel, so a client is cheap to make — but it is
+made in a scope, and anything configured per client, such as an interceptor or call credentials,
+reads its services from that scope. A source lives as long as the process, and a client it held
+would carry the scope of whoever asked first to every caller after. So the source, and every tool
+it produces, holds only a way to get a client: one is made for each listing and each call, from
+the services of the caller's scope. A cached listing is therefore safe to keep for as long as you
+like — it holds declarations, not clients.
+
+A remote tool arrives as a declaration built from the wire, paired with a `RemoteAgentTool` that
+calls back through a client of the same name. It sits in the registry beside a tool written in
+this process and nothing downstream can tell the difference: it goes into `ChatOptions.Tools`, it
+can be offered over MCP, it can be re-served over gRPC.
+
+`IsOpenWorld` is forced true whatever the serving host said — a tool reached over a wire is
+outside this application by construction. The status codes come back as the same exceptions the
+serving side threw, so a refusal stays a refusal across the hop rather than arriving as a fault a
+model will retry.
+
+That holds when the host translates transport failures on its clients — `AddGrpcErrorMapping()`
+on the builder, or container-wide where it reaches this client without its registration saying
+so. The status is read from the whole exception chain, so a translation that keeps the original
+as its inner exception reads the same, and the host's own error becomes the refusal's inner
+exception. A fault is left exactly as the host's client threw it.
+
+### Caching
+
+`Lifetime` is zero by default, meaning the service is asked on every listing. That is deliberate:
+the serving host filters its listing by who is asking, so one caller's answer is not another's. A
+host whose remote surface is the same for everybody can set it; one that is not should leave it
+alone.
+
+### Point to point
+
+The call goes from the host that federates to the service that owns the tool, directly. Nothing
+sits in the middle, which matters for three reasons: a middle would need credentials for every
+domain in the fleet, it would erase whichever claim distinguishes one agent surface from another,
+and it would add a hop to every one of the five to fifteen sequential calls an agent loop makes
+per turn.

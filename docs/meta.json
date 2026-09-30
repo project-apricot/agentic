@@ -1,0 +1,5 @@
+{
+  "title": "Agentic",
+  "description": "Declare an AI tool once, beside the code that runs it, and surface it to any agent surface.",
+  "pages": ["index", "tools", "functions", "sources", "labels", "authorization", "hosting", "mcp", "grpc", "namespaces"]
+}

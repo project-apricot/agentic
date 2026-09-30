@@ -1,0 +1,185 @@
+---
+title: Declaring tools
+description: A tool is a method. What it carries, where its schemas come from, and the one case that needs a class.
+---
+
+# Declaring tools
+
+A tool is an ordinary method on an ordinary class.
+
+```csharp
+[AgentToolType]
+public sealed class TicketTools(TicketStore tickets)    // resolved per invocation, scoped
+{
+    [AgentTool("support_tickets_get", Title = "Get a ticket", ReadOnly = true)]
+    [Description("Reads one ticket in full, given its identifier. Use this after " +
+                 "support_tickets_list has narrowed to a particular ticket.")]
+    public async Task<TicketDetail> Get(
+        [Description("The identifier of the ticket.")] long id,
+        CancellationToken cancellationToken)
+        => Map(await tickets.GetById(id, cancellationToken));
+
+    [AgentTool("support_tickets_delete", Title = "Delete a ticket", Destructive = true)]
+    [Description("Deletes a ticket permanently. Cannot be undone.")]
+    public Task<TicketDeleted> Delete(long id, CancellationToken cancellationToken) => …;
+}
+```
+
+```csharp
+builder.Services.AddAgentToolType<TicketTools>();
+```
+
+The class is resolved from the container once per invocation, so it takes its dependencies through
+its constructor exactly as an endpoint does — scoped ones included. A method that needs nothing
+from the container can be `static`.
+
+This is the shape `[McpServerTool]` uses, and the binding underneath is
+`AIFunctionFactory` — the same machinery the rest of the .NET AI ecosystem uses. This library does
+not reimplement argument binding or schema generation, which is the main reason there is no
+class-per-tool base to derive.
+
+## What goes where
+
+| | Carries |
+| --- | --- |
+| `[AgentTool("…")]` | the name, required, plus `Title`, `ReadOnly`, `Destructive`, `Idempotent`, `OpenWorld` |
+| `[Description]` on the method | the prompt a model selects on |
+| `[Description]` on a parameter | what a model reads about that argument |
+| `[AgentToolLabel]` | your own [labels](/docs/agentic/labels), on the class for a family or the method for one tool |
+| an authorization attribute | on the class for a family, the method for one tool |
+| `[AgentToolIgnore]` | a method that is a tool in every respect except that this host should not offer it |
+
+**The name is required**, and a constructor argument, so leaving it out does not compile. A
+method name is a C# name; a tool name is part of a prompt shared with every other tool a model
+can see, including tools from other applications entirely. 
+
+## Parameters
+
+The parameter list **is** the argument shape, and the schema is generated from it:
+
+```json
+{"type":"object","properties":{"id":{"description":"The identifier of the author.","type":"integer"}},"required":["id"]}
+```
+
+Nullability and defaults become the difference between a required field and an optional one, which
+is why deriving a schema from a wire format that cannot express absence — protobuf, for one —
+tells a model every field is optional.
+
+Three parameter kinds are understood and **left out of the schema**, because a model should not be
+asked to fill them in:
+
+| Parameter | Bound from |
+| --- | --- |
+| `AgentToolContext` (or a host's derived context) | the invocation — who is asking, and the scope |
+| `CancellationToken` | the call |
+| `IProgress<T>` | the caller, where one is listening |
+
+A parameter typed as a record does **not** flatten — it becomes one nested property called after
+the parameter. If you want a flat schema, list the parameters.
+
+## Results
+
+The return type generates `ReturnJsonSchema`, and `[Description]` on its properties is what a model
+reads:
+
+```csharp
+public sealed record TicketSummary
+{
+    [Description("The identifier of the ticket, used to refer to it in other tools.")]
+    public required long Id { get; init; }
+
+    [Description("A one line summary of what the customer needs, where there is one.")]
+    public string? Headline { get; init; }
+}
+```
+
+A method returning `IAsyncEnumerable<T>` works: the schema describes the assembled array and the
+items are collected before the result is returned. It does **not** hand the caller items as they
+arrive — for that, see below.
+
+## The one case that needs a class
+
+`AIFunction` returns one value. A tool whose caller can act on the first results before the last
+ones exist has to derive `AgentTool` and implement `InvokeStreamingAsync`:
+
+```csharp
+[Authorize(Policy = "tickets.read")]
+public sealed class TicketsListTool(TicketStore tickets) : AgentTool
+{
+    public override string Name => "support_tickets_list";
+    public override string Title => "List tickets";
+    public override string Description => "Lists every ticket, newest first. …";
+    public override bool IsReadOnly => true;
+    public override bool IsDestructive => false;
+
+    public override AgentToolResultKind ResultKind => AgentToolResultKind.Sequence;
+
+    public override JsonElement JsonSchema => NoArguments;
+    public override JsonElement? ReturnJsonSchema => AgentToolJson.Schema<IReadOnlyList<TicketSummary>>();
+
+    public override async IAsyncEnumerable<object?> InvokeStreamingAsync(
+        AIFunctionArguments arguments, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await foreach (var ticket in tickets.Stream(cancellationToken))
+        {
+            yield return Map(ticket);
+        }
+    }
+
+    protected override ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken) =>
+        ValueTask.FromResult<object?>(authors.All().Select(Map).ToList());
+}
+```
+
+```csharp
+builder.Services.AddAgentTool<TicketsListTool>();      // still resolved per call
+```
+
+Everything a method would have got for free — the schemas, the flags, the argument handling — is
+stated by hand. That cost is the point: it is worth paying for a sequence and not worth paying for
+anything else. This is the same position `AIFunction` and the MCP SDK's `McpServerTool` occupy:
+derivable, and not the paved path.
+
+Two things to know:
+
+**Implement both.** `InvokeCoreAsync` is what a caller that cannot stream gets — a chat client, an
+MCP `tools/call`, `InvokeCompleteAsync`. Collect there. `ReturnJsonSchema` describes the
+**complete** result either way, so the schema means the same thing for every tool and no consumer
+has to reconstruct the outer shape.
+
+**The registry checks the claim.** `ResultKind.Sequence` on something that is not an `AgentTool`
+refuses to compose, because a plain function cannot produce items and a declaration that says
+otherwise travels — over gRPC, into another service's listing — and misleads whoever acts on it.
+
+The scope the call opened lives until the last item has been yielded or the caller stops reading,
+so a tool holding a unit of work open across a long sequence is the ordinary case rather than a
+hazard. Note that streaming at the tool boundary only helps if the source streams too: a tool whose
+repository materialises the whole list first is stream-shaped but not streaming.
+
+## What a tool declares beyond its prompt
+
+`ReadOnly`, `Destructive`, `Idempotent` and `OpenWorld` are what a caller's policy keys on.
+`Destructive` is the one worth stating deliberately: a rule about destructive tools is worth
+nothing if a tool can arrive without having said. `Idempotent` follows `ReadOnly` unless stated,
+which is right for a read and has to be said by any writing that is not idempotent.
+
+All four are projected into `AdditionalProperties` under the MCP annotation names — `readOnlyHint`
+and the rest — so a consumer that has never heard of this library reads the same behaviour a filter
+here reads.
+
+## Prompts are not documentation
+
+`[Description]` is what a model is shown and what it selects on, so it says *when to reach for
+this* rather than what the implementation does. The XML docs around it are for whoever maintains
+the tool. They are different texts for different readers, and neither is a duplicate of the other.
+
+What determines whether an agent picks the right tool is rarely one description in isolation — it
+is how the descriptions **contrast** with each other. Two tools that both return people need
+descriptions written with the other in view.
+
+## Restraint
+
+An oversized tool surface makes a model worse at choosing between what is on it. A surface is worth
+growing by what an agent is demonstrably useful for, rather than by what happens to be implemented
+— which is the argument against scanning an assembly, and the argument against offering every tool
+an upstream server has.

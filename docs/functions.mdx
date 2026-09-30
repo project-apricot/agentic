@@ -1,0 +1,118 @@
+---
+title: Tools that are not classes
+description: A function, a delegate or a foreign tool, offered on terms this host sets — without anything wrapping it.
+---
+
+# Tools that are not classes
+
+Not every tool is something somebody wrote here. A delegate, something assembled from
+configuration, a tool read off an MCP server, a tool another service owns — all of them are
+`Microsoft.Extensions.AI.AIFunction` or can be described as one, and all of them go into the
+registry **as they are**.
+
+```csharp
+builder.Services.AddAgentTool(
+    function,
+    new AgentToolDeclaration
+    {
+        Name = "weather_search",
+        Description = "Searches a third party weather index.",
+        IsReadOnly = true,
+        IsDestructive = false,
+        IsOpenWorld = true,
+    },
+    tool => tool.RequireAuthorization("tools.external"));
+```
+
+## The declaration sits beside the function, not on it
+
+An `AgentToolDescriptor` holds three things:
+
+```csharp
+AIFunctionDeclaration Tool { get; }        // the function, exactly as it arrived
+IAgentToolDeclaration Declaration { get; } // name, title, prose, behaviour, labels
+IReadOnlyList<object> Metadata { get; }    // whatever the host said
+```
+
+A hand-written `AgentTool` satisfies both of the first two itself, so registering it fills them
+from one object. A method tool has its declaration built from its attributes. A bare function has
+neither, so the declaration is supplied beside it.
+
+This is why there is **no wrapper type** — no `FunctionAgentTool`, no `RenamedAgentTool`, no
+`DelegatingAgentTool`. Three things follow from that, and they are the reason for the shape:
+
+**Identity survives.** A consumer reaching through a listed tool for what is really behind it
+still finds it. That matters most for an MCP client's tool, where
+`descriptor.Tool.GetService<McpClientTool>()` is how the SDK gets back to its own type — and an
+object in the way would have had to remember to forward it.
+
+**Renaming is not a wrapper.** A foreign `search` will collide with, or shadow, something of
+yours. Offering it under another name is a different declaration over the same function:
+
+```csharp
+descriptor.With(AgentToolDeclaration.From(descriptor.Declaration) with { Name = "weather_search" })
+```
+
+which is exactly what [`AgentToolCuration.Prefixing`](/docs/agentic/sources#curation) does.
+
+**So is pinning prose.** A foreign tool's name, description and schema go straight into your
+model's prompt, and the server can change all three after you vetted them. That is a
+prompt-injection surface with no local equivalent, and overriding `Description` with text you
+control is the cheap mitigation:
+
+```csharp
+descriptor.With(AgentToolDeclaration.From(descriptor.Declaration) with
+{
+    Description = "Searches a third party weather index. Returns at most ten results."
+})
+```
+
+## What the function cannot say for itself
+
+`AgentToolDeclaration` requires `Name`, `IsReadOnly` and `IsDestructive`, for the same reason
+those are abstract on `AgentTool`: a default would be the one nobody notices, and a policy keyed
+on "destructive" is worth nothing if a tool can arrive without having said. `Title` falls back to
+the name, `IsIdempotent` to `IsReadOnly`, and `ResultKind` is `Whole` — a function returns one
+value, whatever else is claimed about it.
+
+**Assume the worst about a missing hint.** The MCP annotations are optional and advisory.
+Defaulting an absent `DestructiveHint` to `true` costs you a stricter gate; defaulting it to
+`false` costs you a deletion. The [MCP source](/docs/agentic/mcp#reading-a-foreign-declaration)
+does the former, and so should you.
+
+`ResultKind` is `Whole` and cannot be anything else: a function returns one value, and the
+registry refuses a declaration claiming otherwise. Only an [`AgentTool`](/docs/agentic/tools#the-one-case-that-needs-a-class)
+can produce items.
+
+**Gate it yourself.** A function has no class to carry an attribute, so the registration callback
+is the only thing standing between your callers and it.
+
+## Something described but not runnable
+
+`Descriptor.Tool` is typed as `AIFunctionDeclaration`, not `AIFunction`, so a descriptor can carry
+a tool this host has no way to invoke — a catalogue listing what a fleet offers without holding a
+transport to any of it. Listing one is fine; calling it throws `AgentToolNotInvocableException`,
+rather than every listing having to pretend it could.
+
+`descriptor.AsFunction()` returns the function, or null where only a description is held.
+
+## Reaching the invocation from a function
+
+A function written against this library takes the caller and the scope from the arguments, where
+the AI abstractions already keep such things:
+
+```csharp
+var function = AIFunctionFactory.Create(
+    (AIFunctionArguments arguments) =>
+    {
+        var context = arguments.RequireAgentToolContext();   // who is asking
+        var services = arguments.Services;                   // the scope this call opened
+        …
+    },
+    "inspect",
+    "Looks at its own invocation.");
+```
+
+`GetAgentToolContext()` is the forgiving form. `GetPayload()` returns the caller's own JSON where
+there was any — which is what a tool should prefer over the named arguments when it has a shape of
+its own to deserialise, because nothing has rounded a number in it.

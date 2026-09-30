@@ -1,0 +1,287 @@
+---
+title: Hosting
+description: Registration, the scope a call runs in, who the caller is, and where to wrap.
+---
+
+# Hosting
+
+```csharp
+builder.Services.AddAgentToolsWeb()                              // the machinery, with a web host's defaults
+    .WithAuthorization()                                         // gate tools on what they declare
+    .DecorateInvoker<AuditingInvoker>();                         // and what wraps every call
+
+builder.Services.AddAgentToolType<TicketTools>();                // a class whose methods are tools
+builder.Services.AddAgentTool<TicketsListTool>();                // a hand-written AgentTool, for a sequence
+builder.Services.AddAgentToolValidator<ToolNamingConvention>();  // your rules, checked at startup
+```
+
+There is nothing to configure and there are no flags. Registering something is what makes it
+apply, and a host that wants none of a thing says so by not asking rather than by unpicking a
+registration.
+
+## Two kinds of registration, and why they look different
+
+The split is deliberate, and it is about **whether order carries meaning**.
+
+| | | |
+| --- | --- | --- |
+| `With…` on the builder | ecosystem configuration | replaces what came before, or nests inside it |
+| `Add…` on the services | additive wiring | independent; put it in whatever file owns it |
+
+Who the caller is, whether a gate applies, what wraps an invocation — each either overrides the
+last or wraps it, so the answer depends on sequence. Making those a chain means you cannot write
+them out of order, which is better than a rule about which registration wins.
+
+A tool, a source, a validator, a filter are not like that. They accumulate, order-free, and a host
+should be free to register them beside the code they belong to rather than dragging everything to
+one composition root. So they stay `Add…` on `IServiceCollection` and work whether the machinery
+has been composed yet or not.
+
+```csharp
+public static IAgentToolsBuilder AddSupportDeskAgentTools(this IServiceCollection services)
+{
+    services.AddAgentToolType<TicketTools>();            // additive: anywhere, any order
+    services.AddAgentToolValidator<NamingConvention>();
+
+    return services.AddAgentToolsCore()                  // and the decisions, handed back
+        .WithAuthorization();                            // so the host can go on saying its own
+}
+```
+
+A library of tools returns the builder; the host continues the chain with what only it knows.
+
+## Entry points
+
+| | |
+| --- | --- |
+| `AddAgentToolsCore()` | the machinery and no opinions. The caller is nobody until you say otherwise |
+| `AddAgentToolsWeb()` | the same, plus the caller taken from the request |
+
+`Web` exists because there is no host reachable over HTTP where "nobody is calling" is right, and
+forgetting to say so used to be silent. It deliberately does **not** bring authorization: that
+needs `IAuthorizationService`, which only exists if the host called `AddAuthorization()`, and a
+host with genuinely open tools is a real configuration. Forgetting *that* is already caught by
+the [tripwire](/docs/agentic/authorization#the-tripwire).
+
+The un-suffixed name is left free for your own composition root, the way `AddGrpcClientsCore`
+leaves `AddGrpcClients`.
+
+## Registration says everything inside the call
+
+```csharp
+services.AddAgentToolType<TicketTools>();
+services.AddAgentToolType<TicketAdminTools>(tool => tool.RequireAuthorization("tickets.admin"));
+services.AddAgentTool(searchFunction, declaration, tool => tool.RequireAuthorization("tools.external"));
+```
+
+No per-tool builder is handed back. One that outlives its call can be mutated after the thing it
+configures has been read, and the reading happens in a different phase from the writing. So
+anything else to say about a tool is said in the callback — where `RequireAuthorization` and
+`WithMetadata` are extension methods on `IAgentToolConventionBuilder`.
+
+Attributes are usually the better place anyway: they travel with the tool rather than with one
+composition root. For a method tool they are read from the holding class first and the method
+after, so a family declares a shared requirement once and a method narrows it.
+
+## A tool is built once per call
+
+Both registrations put the type in the container as **scoped** and resolve it again for every
+call — `AddAgentToolType<T>()` through the function factory's target hook, and `AddAgentTool<T>()`
+through a `ScopedAgentTool`, which reads the declaration once from an instance built at
+composition and then resolves a fresh instance per invocation.
+
+```csharp
+[AgentToolType]
+public sealed class TicketTools(TicketStore tickets)   // scoped, and it works
+```
+
+Which means:
+
+- **A listing constructs nothing.** Offering twenty tools does not mean building twenty objects
+  on every request.
+- **An invocation constructs one**, in the scope the call opened, and disposes it with that scope.
+- **A declaration is fixed at first read.** A tool whose description genuinely varies by caller
+  belongs in a [source](/docs/agentic/sources), not in a property.
+
+One consequence worth stating: a hand-written `AgentTool` is not reachable by its own CLR type
+from a listing, because no instance of it exists until somebody calls it.
+`ScopedAgentTool.ToolType` is what remains of that. Narrowing on what a tool *declares*, or on what
+the host said about it, is the better habit — and the only one that works for a tool that never
+had a class, which is most of them.
+
+## Scanning
+
+For a host with enough tools that listing them becomes its own maintenance problem:
+
+```csharp
+builder.Services.AddAgentToolsFromAssembly();                        // the calling assembly
+builder.Services.AddAgentToolsFromAssemblyContaining<TicketTools>();
+builder.Services.AddAgentToolsFromAssembly(assembly, type => type.Namespace!.StartsWith("SupportDesk.Tools"));
+```
+
+Finds both kinds: classes carrying `[AgentToolType]`, and classes deriving from `AgentTool`.
+
+Skipped: abstract bases, open generics, and anything carrying `[AgentToolIgnore]` — which works on
+a method as well as a class, so one tool can be held back without moving it out of its holder.
+Internal types are **not** skipped, since a host may reasonably keep its tools internal.
+
+Two things to know before reaching for it. **A curated list is better where you can have one** —
+naming three tools makes the list itself the surface, and somebody has to decide to add to it.
+And **scan narrowly**: an assembly that also holds tools written for a test is how a surface
+acquires tools nobody meant to offer, which is what the predicate is for.
+
+## Who is asking
+
+One host, one answer:
+
+```csharp
+builder.Services.AddAgentToolsWeb();                       // the request's principal
+builder.Services.AddAgentToolsCore().WithContext<Mine>();  // yours
+```
+
+```csharp
+public interface IAgentToolContextFactory
+{
+    ValueTask<AgentToolContext> CreateAsync(IServiceProvider scopedServices, CancellationToken cancellationToken = default);
+}
+```
+
+An HTTP host reads the request's principal; an MCP server over stdio has no caller at all and says
+so; a host with state worth naming returns a context derived from `AgentToolContext`:
+
+```csharp
+public sealed class SupportDeskAgentToolContextFactory(IHttpContextAccessor accessor) : IAgentToolContextFactory
+{
+    public ValueTask<AgentToolContext> CreateAsync(IServiceProvider scopedServices, CancellationToken cancellationToken = default)
+    {
+        var http = accessor.HttpContext;
+        var user = http?.User;
+
+        return ValueTask.FromResult<AgentToolContext>(new SupportDeskAgentToolContext
+        {
+            User = user?.Identity?.IsAuthenticated == true ? user : null,
+            Services = scopedServices,
+            Surface = http?.Request.Query["surface"].FirstOrDefault()
+        });
+    }
+}
+```
+
+`WithContext` **replaces** rather than adds. Two answers to "who is asking" is not a
+configuration, it is a bug — and because it is a link in a chain, the last one written is plainly
+the one that applies, with no rule to remember about which registration wins.
+`AddAgentToolsCore()` alone leaves `DefaultAgentToolContextFactory`: a scope, and no caller.
+
+Null is not anonymous. A host with no notion of a person leaves `User` unset, and the host's own
+filters decide what that means rather than this library assuming.
+
+## Invoking
+
+```csharp
+var offered = await executor.GetAvailableToolsAsync(cancellationToken);
+var json    = await executor.InvokeCompleteAsync(name, argumentsJson, cancellationToken);
+
+await foreach (var chunk in executor.InvokeAsync(name, argumentsJson, cancellationToken)) { … }
+
+var functions = await executor.GetAvailableFunctionsAsync(cancellationToken);   // for ChatOptions.Tools
+```
+
+**There is no context parameter, and that is the point.** Opening a scope and deciding who the
+caller is are one question a host answers once, not something every MCP handler, gRPC service and
+HTTP endpoint re-derives — differently, with one of them eventually getting it wrong.
+
+Per call the executor opens an `IServiceScope`, asks the context factory over it, and runs the
+call inside both. The scope lives until the last item has been yielded or the caller stops
+reading, whichever comes first — a tool holding a unit of work open across a long sequence is the
+ordinary case, and disposing at the first item would break it.
+
+`InvokeCompleteAsync` collects a sequence tool's items into an array, which is what its output
+schema describes either way. A failure part way through fails the whole call and discards what
+arrived: handing a model a truncated result it cannot recognise as truncated is worse than handing
+it an error.
+
+`GetAvailableFunctionsAsync` returns functions that go back through the executor when called, so a
+conversation that lists once and calls twenty minutes later still runs in a fresh scope — and is
+filtered again, so a tool revoked since is refused rather than run.
+
+## Wrapping
+
+Two seams, because two different things want wrapping.
+
+```csharp
+builder.Services.AddAgentToolsWeb()
+    .DecorateExecutor<RateLimitingExecutor>()   // about the surface
+    .DecorateInvoker<AuditingInvoker>();        // needs the caller
+```
+
+`IAgentToolExecutor` is outside the scope and has no context, which is right for a rate limit, a
+span, or a cap on how many tools a listing offers. `IAgentToolInvoker` is inside it and holds the
+`AgentToolContext`, which is right for an audit record or a per-person budget.
+
+```csharp
+public sealed class AuditingInvoker(IAgentToolInvoker inner, IAudit audit)
+    : DelegatingAgentToolInvoker(inner)
+{
+    public override async Task<string> InvokeCompleteAsync(
+        string name, string? argumentsJson, AgentToolContext context, CancellationToken ct)
+    {
+        await audit.RecordAsync(context.User, name, ct);
+
+        return await base.InvokeCompleteAsync(name, argumentsJson, context, ct);
+    }
+}
+```
+
+Wrappers apply in the order registered, each around the last, so the one registered last is the
+one a caller reaches first.
+
+Two things worth knowing:
+
+**Both are registered behind their interface only.** Resolving a concrete type would reach past
+whatever is wrapped around it, and a rate limit or an audit log nobody reaches is worse than not
+having one.
+
+**Override both invocation methods, or neither.** `InvokeAsync` and `InvokeCompleteAsync` are
+separate calls rather than one expressed in terms of the other, so a wrapper overriding only the
+streaming one misses every caller that cannot stream. A rate limit on one of the two is a rate
+limit on neither.
+
+The invoker is resolved from the call's own scope, so a filter, an authorization filter or a
+wrapper that reads per-call state can be registered scoped, and is built once per call:
+
+```csharp
+builder.Services.AddAgentToolFilter<TenantAgentToolFilter>(ServiceLifetime.Scoped);
+builder.Services.AddAgentToolAuthorizationFilter<EntitlementAgentToolAuthorizationFilter>(ServiceLifetime.Scoped);
+```
+
+Filters run first and decide what exists for the caller; authorization filters run after and
+decide what they may run. See [Authorization](/docs/agentic/authorization) for why the two are
+kept apart.
+
+## Errors
+
+Failures are `AgentToolException` and its derivatives — `AgentToolNotFoundException` (and
+`AgentToolFilteredException`, the same answer for a tool a filter kept from this caller),
+`AgentToolArgumentException`, `AgentToolAccessDeniedException`, `AgentToolDeclarationException`,
+`AgentToolNotInvocableException`. Deliberately not a host's error type: what a failed tool call
+should look like is an application's decision, and a library that picked one would be argued with
+by every host that wanted another.
+
+Map them at your surface — the [MCP](/docs/agentic/mcp#errors) and
+[gRPC](/docs/agentic/grpc#errors) packages already do. The distinction worth preserving is
+**refusal versus fault**: a refusal that reads as a fault invites a model to retry it, and an
+agent will accept the invitation.
+
+## Reaching them from a surface
+
+Nothing in the core opens a port. The transports are packages of their own —
+[MCP](/docs/agentic/mcp), [gRPC](/docs/agentic/grpc) — and an HTTP surface is a handful of
+endpoints over the executor:
+
+```csharp
+app.MapGet("/tools", async (IAgentToolExecutor executor, CancellationToken cancellationToken) =>
+    Results.Ok((await executor.GetAvailableToolsAsync(cancellationToken)).Select(Describe)));
+
+app.MapPost("/tools/{name}", async (IAgentToolExecutor executor, HttpContext http, string name, CancellationToken cancellationToken) =>
+    Results.Text(await executor.InvokeCompleteAsync(name, await ReadBody(http), cancellationToken), "application/json"));
+```
