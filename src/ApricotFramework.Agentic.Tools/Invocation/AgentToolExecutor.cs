@@ -62,10 +62,7 @@ public class AgentToolExecutor : IAgentToolExecutor
     /// whichever comes first. A tool holding a unit of work open across a long sequence is the
     /// ordinary case, and disposing at the first item would break it.
     /// </remarks>
-    public async IAsyncEnumerable<string> InvokeAsync(
-        string name,
-        string? argumentsJson,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public async IAsyncEnumerable<string> InvokeAsync(string name, string? argumentsJson, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         await using var scope = this.scopes.CreateAsyncScope();
 
@@ -97,6 +94,5 @@ public class AgentToolExecutor : IAgentToolExecutor
     /// reading a per-request tenant, say - gets the scoped ones rather than a set captured when
     /// the executor was built.
     /// </remarks>
-    private static IAgentToolInvoker Invoker(AsyncServiceScope scope) =>
-        scope.ServiceProvider.GetRequiredService<IAgentToolInvoker>();
+    private static IAgentToolInvoker Invoker(AsyncServiceScope scope) => scope.ServiceProvider.GetRequiredService<IAgentToolInvoker>();
 }

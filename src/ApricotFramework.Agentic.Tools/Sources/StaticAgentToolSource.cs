@@ -46,6 +46,5 @@ public sealed class StaticAgentToolSource : IAgentToolSource
     }
 
     /// <inheritdoc />
-    public ValueTask<IReadOnlyList<AgentToolDescriptor>> GetToolsAsync(IAgentToolSourceContext context, CancellationToken cancellationToken = default) =>
-        ValueTask.FromResult(this.tools);
+    public ValueTask<IReadOnlyList<AgentToolDescriptor>> GetToolsAsync(IAgentToolSourceContext context, CancellationToken cancellationToken = default) => ValueTask.FromResult(this.tools);
 }

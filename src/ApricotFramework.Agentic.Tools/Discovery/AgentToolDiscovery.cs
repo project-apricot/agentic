@@ -17,12 +17,6 @@ namespace ApricotFramework.Agentic.Tools.Discovery;
 /// that was never meant to be offered rarely declares a description or an authorization. Where that
 /// is not enough, <see cref="AgentToolIgnoreAttribute"/> and the predicate are.
 /// </para>
-/// <para>
-/// Worth saying plainly: a curated surface beats a discovered one. An oversized tool surface makes
-/// a model worse at choosing between what is on it, and scanning is how a surface grows without
-/// anyone deciding that it should. These helpers exist for the host with forty tools and a
-/// convention, not as the recommended way to register three.
-/// </para>
 /// </remarks>
 public static class AgentToolDiscovery
 {

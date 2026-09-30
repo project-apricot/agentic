@@ -28,7 +28,7 @@ namespace ApricotFramework.Agentic.Tools;
 /// </para>
 /// <para>
 /// <strong>Not sealed, on purpose.</strong> A host that wants its vocabulary closed at the point
-/// of declaration derives from this, and gets a label name it cannot typo and a value that has
+/// of declaration derives from this, and gets a label name it cannot make a typo in and a value that has
 /// to be one of the type's:
 /// </para>
 /// <code>

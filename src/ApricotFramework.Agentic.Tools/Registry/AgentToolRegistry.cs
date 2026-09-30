@@ -110,9 +110,7 @@ public class AgentToolRegistry : IAgentToolRegistry
             throw new AgentToolDeclarationException($"A tool from '{tool.Tool.GetType().Name}' declares no name, so nothing can address it.");
         }
 
-        // a declaration that claims a capability the function cannot provide is not an opinion
-        // a host might reasonably hold - it is a claim that travels, over gRPC and into another
-        // service's listing, and misleads whoever acts on it
+        // a tool declaring sequential output must be derived from AgentTool to implement async enumeration
         if (tool.Declaration.ResultKind == AgentToolResultKind.Sequence && tool.Tool is not AgentTool)
         {
             throw new AgentToolDeclarationException(

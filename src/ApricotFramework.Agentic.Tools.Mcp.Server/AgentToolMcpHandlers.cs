@@ -51,7 +51,7 @@ public sealed class AgentToolMcpHandlers(IAgentToolExecutor executor)
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var name = request.Params?.Name;
+        var name = request.Params.Name;
 
         var offered = await this.OfferedAsync(cancellationToken).ConfigureAwait(false);
 

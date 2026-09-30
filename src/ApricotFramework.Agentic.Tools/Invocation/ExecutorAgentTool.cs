@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.AI;
 using System.Text.Json;
 
@@ -14,7 +15,7 @@ namespace ApricotFramework.Agentic.Tools.Invocation;
 /// which opens a fresh scope and rebuilds the context for each call.
 /// </para>
 /// <para>
-/// That also means the filters run again at call time, which is the behaviour worth having: a
+/// That also means the filters run again at call time, which is the behavior worth having: a
 /// tool listed twenty minutes ago and revoked since is refused rather than run.
 /// </para>
 /// </remarks>
@@ -82,8 +83,7 @@ internal sealed class ExecutorAgentTool : AgentTool
     /// Forwarded so that a consumer reaching for what is really behind this - the underlying
     /// <c>McpClientTool</c>, say - finds it rather than finding a proxy.
     /// </remarks>
-    public override object? GetService(Type serviceType, object? serviceKey = null) =>
-        base.GetService(serviceType, serviceKey) ?? this.descriptor.Tool.GetService(serviceType, serviceKey);
+    public override object? GetService(Type serviceType, object? serviceKey = null) => base.GetService(serviceType, serviceKey) ?? this.descriptor.Tool.GetService(serviceType, serviceKey);
 
     /// <inheritdoc />
     protected override async ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
@@ -94,9 +94,7 @@ internal sealed class ExecutorAgentTool : AgentTool
     }
 
     /// <inheritdoc />
-    public override async IAsyncEnumerable<object?> InvokeStreamingAsync(
-        AIFunctionArguments arguments,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public override async IAsyncEnumerable<object?> InvokeStreamingAsync(AIFunctionArguments arguments, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         await foreach (var chunk in this.executor.InvokeAsync(this.Name, Write(arguments), cancellationToken).ConfigureAwait(false))
         {

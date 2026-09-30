@@ -1,7 +1,7 @@
 namespace ApricotFramework.Agentic.Tools;
 
 /// <summary>
-/// Every tool a caller could be offered, composed from the sources a host registered.
+/// Every tool a caller could be offered, composed of the sources a host registered.
 /// </summary>
 /// <remarks>
 /// Composed per call rather than once, because a source can answer differently for a different
@@ -20,9 +20,7 @@ public interface IAgentToolRegistry
     /// Unfiltered. Which of these the caller may actually reach is decided by the filters, which
     /// the invoker applies.
     /// </remarks>
-    ValueTask<IReadOnlyList<AgentToolDescriptor>> GetToolsAsync(
-        IAgentToolSourceContext context,
-        CancellationToken cancellationToken = default);
+    ValueTask<IReadOnlyList<AgentToolDescriptor>> GetToolsAsync(IAgentToolSourceContext context, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Finds the tool offered under a name.
@@ -31,10 +29,7 @@ public interface IAgentToolRegistry
     /// <param name="context">Who is asking, and the scope this composition runs in.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task containing the tool or null where none is offered under that name.</returns>
-    ValueTask<AgentToolDescriptor?> FindAsync(
-        string? name,
-        IAgentToolSourceContext context,
-        CancellationToken cancellationToken = default);
+    ValueTask<AgentToolDescriptor?> FindAsync(string? name, IAgentToolSourceContext context, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets the tool offered under a name.
@@ -44,8 +39,5 @@ public interface IAgentToolRegistry
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task containing the tool.</returns>
     /// <exception cref="Exceptions.AgentToolNotFoundException">Thrown when no tool is offered under that name.</exception>
-    ValueTask<AgentToolDescriptor> RequireAsync(
-        string? name,
-        IAgentToolSourceContext context,
-        CancellationToken cancellationToken = default);
+    ValueTask<AgentToolDescriptor> RequireAsync(string? name, IAgentToolSourceContext context, CancellationToken cancellationToken = default);
 }

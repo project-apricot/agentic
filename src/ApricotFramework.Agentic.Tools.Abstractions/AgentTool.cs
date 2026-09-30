@@ -87,9 +87,7 @@ public abstract class AgentTool : AIFunction, IAgentToolDeclaration
     /// there and streams here - which is why a consumer that cannot stream pays nothing for a
     /// tool that can.
     /// </remarks>
-    public virtual async IAsyncEnumerable<object?> InvokeStreamingAsync(
-        AIFunctionArguments arguments,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public virtual async IAsyncEnumerable<object?> InvokeStreamingAsync(AIFunctionArguments arguments, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         yield return await this.InvokeAsync(arguments, cancellationToken).ConfigureAwait(false);
     }

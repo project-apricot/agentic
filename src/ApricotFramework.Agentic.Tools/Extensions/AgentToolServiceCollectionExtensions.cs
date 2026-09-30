@@ -27,12 +27,6 @@ public static class AgentToolServiceCollectionExtensions
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="services"/> is null.</exception>
     /// <remarks>
     /// <para>
-    /// No filters are registered - not even authorization, which lives in the ASP.NET Core
-    /// package and is a separate call there. No declaration checks either: what a tool ought to
-    /// carry beyond a name is the host's judgment, and the ones this library ships wait to be
-    /// chosen.
-    /// </para>
-    /// <para>
     /// The one thing registered without being asked for is the tripwire: a tool declaring a gate
     /// that nothing enforces refuses to compose.
     /// </para>
@@ -46,23 +40,12 @@ public static class AgentToolServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
 
         services.AddOptions();
-
-        // the implementation type is named rather than produced by a factory, because
-        // TryAddEnumerable dedupes on it and a factory that names none is indistinguishable from
-        // any other source a host registers
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IAgentToolSource, RegistrationAgentToolSource>());
-
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IAgentToolValidator, EnforcementDeclaredValidator>());
-
         services.TryAddSingleton<IAgentToolRegistry, AgentToolRegistry>();
-
-        // behind the interfaces only. a host resolving a concrete type would reach past anything
-        // wrapped around it, and a rate limit or an audit log nobody reaches is worse than none
         services.TryAddSingleton<IAgentToolInvoker, AgentToolInvoker>();
         services.TryAddSingleton<IAgentToolExecutor, AgentToolExecutor>();
-
         services.TryAddSingleton<IAgentToolContextFactory, DefaultAgentToolContextFactory>();
-
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentToolStartupValidation>());
 
         return new AgentToolsBuilder(services);

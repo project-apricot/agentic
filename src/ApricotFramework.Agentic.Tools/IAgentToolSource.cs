@@ -29,7 +29,5 @@ public interface IAgentToolSource
     /// <param name="context">Who is asking, and the scope this composition runs in.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task containing the tools.</returns>
-    ValueTask<IReadOnlyList<AgentToolDescriptor>> GetToolsAsync(
-        IAgentToolSourceContext context,
-        CancellationToken cancellationToken = default);
+    ValueTask<IReadOnlyList<AgentToolDescriptor>> GetToolsAsync(IAgentToolSourceContext context, CancellationToken cancellationToken = default);
 }

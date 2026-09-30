@@ -90,7 +90,7 @@ public sealed class GrpcAgentToolSource : IAgentToolSource
     /// <returns>The descriptor, or null to leave it out.</returns>
     private AgentToolDescriptor? Offer(Contract.AgentToolDeclaration declared, GrpcAgentToolSourceOptions settings)
     {
-        var declaration = new Tools.AgentToolDeclaration
+        var declaration = new AgentToolDeclaration
         {
             Name = settings.Prefix is null ? declared.Name : settings.Prefix + declared.Name,
             Title = string.IsNullOrWhiteSpace(declared.Title) ? declared.Name : declared.Title,
@@ -99,10 +99,8 @@ public sealed class GrpcAgentToolSource : IAgentToolSource
             IsDestructive = declared.Destructive,
             IsIdempotent = declared.Idempotent,
             IsOpenWorld = declared.OpenWorld,
-            ResultKind = declared.ResultKind == Contract.AgentToolResultKind.Sequence
-                ? AgentToolResultKind.Sequence
-                : AgentToolResultKind.Whole,
-            Labels = declared.Labels.ToDictionary(label => label.Key, label => (object?)label.Value, StringComparer.Ordinal)
+            ResultKind = declared.ResultKind == Contract.AgentToolResultKind.Sequence ? AgentToolResultKind.Sequence : AgentToolResultKind.Whole,
+            Labels = declared.Labels.ToDictionary(label => label.Key, object? (label) => label.Value, StringComparer.Ordinal)
         };
 
         var tool = new RemoteAgentTool(

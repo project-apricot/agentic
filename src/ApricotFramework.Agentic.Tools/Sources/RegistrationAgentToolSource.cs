@@ -55,8 +55,8 @@ public sealed class RegistrationAgentToolSource : IAgentToolSource
     /// </remarks>
     private IReadOnlyList<AgentToolDescriptor> Describe(IServiceProvider services)
     {
-        IReadOnlyList<AgentToolDescriptor> described = [.. this.registrations.Select(registration => registration(services))];
+        IReadOnlyList<AgentToolDescriptor> fresh = [.. this.registrations.Select(registration => registration(services))];
 
-        return Interlocked.CompareExchange(ref this.described, described, null) ?? described;
+        return Interlocked.CompareExchange(ref this.described, fresh, null) ?? fresh;
     }
 }

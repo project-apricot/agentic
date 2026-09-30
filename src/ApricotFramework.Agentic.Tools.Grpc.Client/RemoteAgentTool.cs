@@ -1,6 +1,6 @@
 using ApricotFramework.Agentic.Tools.Exceptions;
 using ApricotFramework.Agentic.Tools.Grpc.Contract;
-using global::Grpc.Core;
+using Grpc.Core;
 using Microsoft.Extensions.AI;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -29,16 +29,6 @@ public sealed class RemoteAgentTool : AgentTool
     /// What the serving host said about the tool.
     /// </summary>
     private readonly AgentToolDeclaration declaration;
-
-    /// <summary>
-    /// The schema of the arguments.
-    /// </summary>
-    private readonly JsonElement inputSchema;
-
-    /// <summary>
-    /// The schema of the result, where the serving host published one.
-    /// </summary>
-    private readonly JsonElement? outputSchema;
 
     /// <summary>
     /// Where the call goes.
@@ -71,8 +61,8 @@ public sealed class RemoteAgentTool : AgentTool
         ArgumentException.ThrowIfNullOrWhiteSpace(remoteName);
 
         this.declaration = declaration;
-        this.inputSchema = inputSchema;
-        this.outputSchema = outputSchema;
+        this.JsonSchema = inputSchema;
+        this.ReturnJsonSchema = outputSchema;
         this.client = client;
         this.remoteName = remoteName;
     }
@@ -109,10 +99,10 @@ public sealed class RemoteAgentTool : AgentTool
     public override IReadOnlyDictionary<string, object?> Labels => this.declaration.Labels;
 
     /// <inheritdoc />
-    public override JsonElement JsonSchema => this.inputSchema;
+    public override JsonElement JsonSchema { get; }
 
     /// <inheritdoc />
-    public override JsonElement? ReturnJsonSchema => this.outputSchema;
+    public override JsonElement? ReturnJsonSchema { get; }
 
     /// <inheritdoc />
     protected override async ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)

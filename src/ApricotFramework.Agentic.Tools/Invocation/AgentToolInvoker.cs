@@ -77,11 +77,7 @@ public class AgentToolInvoker : IAgentToolInvoker
     /// The filters run before the first item, so a caller that is refused receives nothing rather
     /// than a truncated result.
     /// </remarks>
-    public async IAsyncEnumerable<string> InvokeAsync(
-        string name,
-        string? argumentsJson,
-        AgentToolContext context,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public async IAsyncEnumerable<string> InvokeAsync(string name, string? argumentsJson, AgentToolContext context, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(context);
 
@@ -111,7 +107,7 @@ public class AgentToolInvoker : IAgentToolInvoker
     /// </para>
     /// <para>
     /// A failure part-way through a sequence fails the whole call, and the items already
-    /// collected are discarded. Handing a model a truncated result it has no way to recognise as
+    /// collected are discarded. Handing a model a truncated result it has no way to recognize as
     /// truncated is worse than handing it an error.
     /// </para>
     /// </remarks>
@@ -132,8 +128,7 @@ public class AgentToolInvoker : IAgentToolInvoker
     /// <param name="value">What the tool returned.</param>
     /// <param name="function">The tool.</param>
     /// <returns>The result as JSON.</returns>
-    private static string Write(object? value, AIFunction function) =>
-        JsonSerializer.Serialize(value, function.JsonSerializerOptions);
+    private static string Write(object? value, AIFunction function) => JsonSerializer.Serialize(value, function.JsonSerializerOptions);
 
     /// <summary>
     /// Finds the tool, puts it to the filters, and insists it can be run here.
@@ -142,10 +137,7 @@ public class AgentToolInvoker : IAgentToolInvoker
     /// <param name="context">Who is asking.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task containing the function behind the tool.</returns>
-    private async ValueTask<AIFunction> ResolveAsync(
-        string name,
-        AgentToolContext context,
-        CancellationToken cancellationToken)
+    private async ValueTask<AIFunction> ResolveAsync(string name, AgentToolContext context, CancellationToken cancellationToken)
     {
         var descriptor = await this.registry.RequireAsync(name, context, cancellationToken).ConfigureAwait(false);
 
@@ -156,8 +148,7 @@ public class AgentToolInvoker : IAgentToolInvoker
             throw new AgentToolAccessDeniedException(decision.Reason!);
         }
 
-        return descriptor.AsFunction()
-               ?? throw new AgentToolNotInvocableException($"The tool '{descriptor.Name}' is declared here but nothing here can run it.");
+        return descriptor.AsFunction() ?? throw new AgentToolNotInvocableException($"The tool '{descriptor.Name}' is declared here but nothing here can run it.");
     }
 
     /// <summary>
