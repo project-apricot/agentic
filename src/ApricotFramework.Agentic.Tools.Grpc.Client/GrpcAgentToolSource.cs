@@ -1,4 +1,6 @@
 using ApricotFramework.Agentic.Tools.Grpc.Contract;
+using Grpc.Net.ClientFactory;
+using Microsoft.Extensions.DependencyInjection;
 using System.Text.Json;
 
 namespace ApricotFramework.Agentic.Tools.Grpc.Client;
@@ -7,16 +9,32 @@ namespace ApricotFramework.Agentic.Tools.Grpc.Client;
 /// The tools another service is offering this caller, now.
 /// </summary>
 /// <remarks>
-/// One of these per service a host federates. Each holds its own client, so addressing,
-/// deadlines, retries and credentials are wired where they belong - on the client the host
-/// registered - and nothing here has an opinion about any of them.
+/// <para>
+/// One of these per service a host federates. Every such service implements the same contract,
+/// so the generated client type never tells them apart: a host names each client, or derives a
+/// type of its own per service, and registers it however it registers any gRPC client.
+/// Addressing, deadlines, retries and credentials all live on that registration, and nothing
+/// here has an opinion about any of them.
+/// </para>
+/// <para>
+/// It holds a way to get a client rather than a client. The channel beneath is cached by the
+/// factory either way, so a client is cheap to make - but it is made in a scope, and whatever the
+/// host configured per client (an interceptor, call credentials) reads its services from that
+/// scope. A client held by a source that lives as long as the process would carry the scope of
+/// whoever happened to ask first. So a client is made for each listing, from the caller's own
+/// services, and dropped when the listing is read.
+/// </para>
 /// </remarks>
 public sealed class GrpcAgentToolSource : IAgentToolSource
 {
     /// <summary>
-    /// Where the listing comes from.
+    /// Gets a client that reaches the service, from the services of the call.
     /// </summary>
-    private readonly AgentTools.AgentToolsClient client;
+    /// <remarks>
+    /// Captures a name or a type and nothing else, so holding it for the life of the process
+    /// holds no service, channel or provider.
+    /// </remarks>
+    private readonly Func<IServiceProvider, AgentTools.AgentToolsClient> client;
 
     /// <summary>
     /// How this service's tools are offered here.
@@ -36,17 +54,64 @@ public sealed class GrpcAgentToolSource : IAgentToolSource
     /// <summary>
     /// Creates a new instance of the source.
     /// </summary>
-    /// <param name="client">Where the listing comes from.</param>
+    /// <param name="client">Gets a client that reaches the service, from the services of the call.</param>
     /// <param name="options">How this service's tools are offered here.</param>
-    /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
-    public GrpcAgentToolSource(AgentTools.AgentToolsClient client, GrpcAgentToolSourceOptions options)
+    /// <remarks>
+    /// Private, so the only ways to say how a client is found are the two that cannot hold one.
+    /// </remarks>
+    private GrpcAgentToolSource(Func<IServiceProvider, AgentTools.AgentToolsClient> client, GrpcAgentToolSourceOptions options)
     {
-        ArgumentNullException.ThrowIfNull(client);
-        ArgumentNullException.ThrowIfNull(options);
-
         this.client = client;
         this.options = options;
     }
+
+    /// <summary>
+    /// Creates a source reaching the service through a client type of the host's own.
+    /// </summary>
+    /// <typeparam name="TClient">A type derived from the generated client, one per service, registered with <c>AddGrpcClient()</c>.</typeparam>
+    /// <param name="options">How this service's tools are offered here.</param>
+    /// <returns>The source.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="options"/> is null.</exception>
+    /// <remarks>
+    /// A type per service is what lets registration helpers that name a client after its type
+    /// register two of them. The client factory ignores namespaces when it does that, so two
+    /// such types need different names, not just different namespaces.
+    /// </remarks>
+    public static GrpcAgentToolSource ForClient<TClient>(GrpcAgentToolSourceOptions options) where TClient : AgentTools.AgentToolsClient
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        return new GrpcAgentToolSource(Typed<TClient>, options);
+    }
+
+    /// <summary>
+    /// Creates a source reaching the service through a named client.
+    /// </summary>
+    /// <param name="clientName">The name the client was registered under, with <c>AddGrpcClient&lt;AgentTools.AgentToolsClient(name)</c>.</param>
+    /// <param name="options">How this service's tools are offered here.</param>
+    /// <returns>The source.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="options"/> is null.</exception>
+    /// <exception cref="ArgumentException">Thrown when the name is blank.</exception>
+    public static GrpcAgentToolSource ForClient(string clientName, GrpcAgentToolSourceOptions options)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(clientName);
+        ArgumentNullException.ThrowIfNull(options);
+
+        return new GrpcAgentToolSource(services => services.GetRequiredService<GrpcClientFactory>().CreateClient<AgentTools.AgentToolsClient>(clientName), options);
+    }
+
+    /// <summary>
+    /// Gets a client of the host's own type.
+    /// </summary>
+    /// <typeparam name="TClient">The type.</typeparam>
+    /// <param name="services">The services of the call.</param>
+    /// <returns>The client.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the type was never registered as a client.</exception>
+    /// <remarks>
+    /// The named path needs no such message: the factory already names a missing client itself.
+    /// </remarks>
+    private static AgentTools.AgentToolsClient Typed<TClient>(IServiceProvider services) where TClient : AgentTools.AgentToolsClient =>
+        services.GetService<TClient>() ?? throw new InvalidOperationException($"No gRPC client of type '{typeof(TClient).Name}' is registered, so its agent tools cannot be reached. Register it with AddGrpcClient<{typeof(TClient).Name}>().");
 
     /// <inheritdoc />
     public async ValueTask<IReadOnlyList<AgentToolDescriptor>> GetToolsAsync(IAgentToolSourceContext context, CancellationToken cancellationToken = default)
@@ -62,7 +127,7 @@ public sealed class GrpcAgentToolSource : IAgentToolSource
             return held.Tools;
         }
 
-        var response = await this.client.ListToolsAsync(new ListToolsRequest(), cancellationToken: cancellationToken).ConfigureAwait(false);
+        var response = await this.client(context.Services).ListToolsAsync(new ListToolsRequest(), cancellationToken: cancellationToken).ConfigureAwait(false);
 
         var offered = new List<AgentToolDescriptor>(response.Tools.Count);
 

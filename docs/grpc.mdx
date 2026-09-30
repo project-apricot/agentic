@@ -92,34 +92,63 @@ cannot mistake a truncated sequence for a complete one.
 
 ## Federating
 
+The client is yours. Register it however this fleet registers a gRPC client — by hand, from
+configuration, through discovery — with its addressing, deadlines, retries, error mapping and
+credentials, none of which belong here. Then say which client reaches which service.
+
+Every service implements the same contract, so the generated `AgentToolsClient` cannot tell them
+apart. Two things can:
+
+**A type per service** — the one to reach for first:
+
 ```csharp
-builder.Services.AddAgentToolsCore();
+public sealed class BillingAgentToolsClient(CallInvoker invoker) : AgentTools.AgentToolsClient(invoker);
 
-builder.Services.AddGrpcAgentTools(provider =>
-    provider.GetRequiredService<AgentTools.AgentToolsClient>());
+builder.Services.AddGrpcClient<BillingAgentToolsClient>(client => client.Address = new Uri("https://billing.internal"))
+    .AddCallCredentials(…);
 
-builder.Services.AddGrpcAgentTools(
-    provider => provider.GetRequiredService<GrpcClientFactory>().CreateClient<AgentTools.AgentToolsClient>("billing"),
-    options => options.Prefix = "billing_");
+builder.Services.AddGrpcAgentTools<BillingAgentToolsClient>(options => options.Prefix = "billing_");
 ```
 
-One call per service federated, each with its own source — so one service being down costs its
-tools rather than all of them.
+No string has to match in two places, a missing registration fails naming the type to register,
+and it works with registration helpers that name a client after its type — two services, two
+types, two names. The client factory ignores the namespace when it does that, so give each type
+a name of its own rather than the same name in two namespaces.
 
-**It takes a client, not an address.** Addressing, deadlines, retries, error mapping and
-credentials all belong on the client, and none of them belong here. Register it however this
-fleet registers a gRPC client — by discovery, by configuration, by hand — and pass a way to
-resolve it.
+**A name per service**, for a host that would rather not declare types:
+
+```csharp
+builder.Services.AddGrpcClient<AgentTools.AgentToolsClient>("tickets", client => client.Address = …);
+
+builder.Services.AddGrpcAgentTools("tickets", options => options.Prefix = "tickets_");
+```
+
+One call per service federated, each with its own source and its own options, so one service
+being down costs its tools rather than all of them.
+
+**No client is held.** The factory caches the channel, so a client is cheap to make — but it is
+made in a scope, and anything configured per client, such as an interceptor or call credentials,
+reads its services from that scope. A source lives as long as the process, and a client it held
+would carry the scope of whoever asked first to every caller after. So the source, and every tool
+it produces, holds only a way to get a client: one is made for each listing and each call, from
+the services of the caller's scope. A cached listing is therefore safe to keep for as long as you
+like — it holds declarations, not clients.
 
 A remote tool arrives as a declaration built from the wire, paired with a `RemoteAgentTool` that
-calls back over the same client. It sits in the registry beside a tool written in this process
-and nothing downstream can tell the difference: it goes into `ChatOptions.Tools`, it can be
-offered over MCP, it can be re-served over gRPC.
+calls back through a client of the same name. It sits in the registry beside a tool written in
+this process and nothing downstream can tell the difference: it goes into `ChatOptions.Tools`, it
+can be offered over MCP, it can be re-served over gRPC.
 
 `IsOpenWorld` is forced true whatever the serving host said — a tool reached over a wire is
 outside this application by construction. The status codes come back as the same exceptions the
 serving side threw, so a refusal stays a refusal across the hop rather than arriving as a fault a
 model will retry.
+
+That holds when the host translates transport failures on its clients — `AddGrpcErrorMapping()`
+on the builder, or container-wide where it reaches this client without its registration saying
+so. The status is read from the whole exception chain, so a translation that keeps the original
+as its inner exception reads the same, and the host's own error becomes the refusal's inner
+exception. A fault is left exactly as the host's client threw it.
 
 ### Caching
 
