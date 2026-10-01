@@ -3,11 +3,9 @@ using ApricotFramework.Agentic.Tools.Exceptions;
 namespace ApricotFramework.Agentic.Tools.Validators;
 
 /// <summary>
-/// Insists every tool declares a title.
+/// Requires every tool to declare a title.
 /// </summary>
-/// <remarks>
-/// For a host with a surface that shows one. Not registered by default: a library that refused to serve over a missing label would be one a host works around.
-/// </remarks>
+/// <remarks>Not registered by default.</remarks>
 public sealed class TitleDeclaredValidator : IAgentToolValidator
 {
     /// <inheritdoc />

@@ -172,6 +172,10 @@ configuration, it is a bug — and because it is a link in a chain, the last one
 the one that applies, with no rule to remember about which registration wins.
 `AddAgentToolsCore()` alone leaves `DefaultAgentToolContextFactory`: a scope, and no caller.
 
+The factory is registered **scoped** and resolved from each call's own scope, so it can depend on
+whatever that scope offers — a per-request tenant, a token read once per call. The executor and the
+startup check both resolve it per call rather than holding one.
+
 Null is not anonymous. A host with no notion of a person leaves `User` unset, and the host's own
 filters decide what that means rather than this library assuming.
 
@@ -246,13 +250,18 @@ separate calls rather than one expressed in terms of the other, so a wrapper ove
 streaming one misses every caller that cannot stream. A rate limit on one of the two is a rate
 limit on neither.
 
-The invoker is resolved from the call's own scope, so a filter, an authorization filter or a
-wrapper that reads per-call state can be registered scoped, and is built once per call:
+The invoker is resolved from the call's own scope, so filters, authorization filters and
+exception translators are **scoped by default**, built once per call, and free to depend on
+anything scoped:
 
 ```csharp
-builder.Services.AddAgentToolFilter<TenantAgentToolFilter>(ServiceLifetime.Scoped);
-builder.Services.AddAgentToolAuthorizationFilter<EntitlementAgentToolAuthorizationFilter>(ServiceLifetime.Scoped);
+builder.Services.AddAgentToolFilter<TenantAgentToolFilter>();
+builder.Services.AddAgentToolAuthorizationFilter<EntitlementAgentToolAuthorizationFilter>();
 ```
+
+Pass `ServiceLifetime.Singleton` only for one that depends on nothing scoped. One held for the
+life of the process that reached something scoped would capture the first caller's services for
+everyone after — which is why a development host's scope validation refuses to build it.
 
 Filters run first and decide what exists for the caller; authorization filters run after and
 decide what they may run. See [Authorization](/docs/agentic/authorization) for why the two are
@@ -263,9 +272,37 @@ kept apart.
 Failures are `AgentToolException` and its derivatives — `AgentToolNotFoundException` (and
 `AgentToolFilteredException`, the same answer for a tool a filter kept from this caller),
 `AgentToolArgumentException`, `AgentToolAccessDeniedException`, `AgentToolDeclarationException`,
-`AgentToolNotInvocableException`. Deliberately not a host's error type: what a failed tool call
-should look like is an application's decision, and a library that picked one would be argued with
-by every host that wanted another.
+`AgentToolNotInvocableException`, and `AgentToolUnauthenticatedException` (an access denial for
+want of a caller) — and `AgentToolFailedException`, for a tool that ran and whose operation failed.
+Deliberately not a host's error type: what a failed tool call should look like is an application's
+decision, and a library that picked one would be argued with by every host that wanted another.
+
+### A host's own exceptions
+
+A tool throws whatever the code behind it throws. Without help, a host's not-found crosses every
+surface as a fault, and a model cannot tell a missing record from a broken service. Describe the
+host's vocabulary once:
+
+```csharp
+public sealed class HostErrors : IAgentToolExceptionTranslator
+{
+    public AgentToolException? Translate(Exception exception, AgentToolDescriptor tool) => exception switch
+    {
+        RecordNotFoundException => new AgentToolFailedException(AgentToolFailureKind.NotFound, exception.Message, exception),
+        UpstreamTimeoutException => new AgentToolFailedException(AgentToolFailureKind.Timeout, exception.Message, exception),
+        _ => null
+    };
+}
+
+builder.Services.AddAgentToolExceptionTranslator<HostErrors>();
+```
+
+The invoker applies it to whatever a tool raises — including part-way through a sequence — so an
+HTTP endpoint, an MCP session, a gRPC caller and an in-process loop all see the same failure, with
+the host's exception kept inside. `AgentToolFailureKind` is deliberately coarse: what happens next
+depends on very few distinctions, and `IsRetryable` — decided by the kind unless the translator says
+otherwise — is the one a driver of an agent most needs. Translators are asked in registration
+order; the first answer wins, and what this library raised itself is never offered.
 
 Map them at your surface — the [MCP](/docs/agentic/mcp#errors) and
 [gRPC](/docs/agentic/grpc#errors) packages already do. The distinction worth preserving is

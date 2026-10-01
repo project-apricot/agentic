@@ -7,59 +7,48 @@ using System.Collections.Concurrent;
 namespace ApricotFramework.Agentic.Tools.Mcp.Client;
 
 /// <summary>
-/// The servers a host wrote down, connected once and shared.
+/// Connects once to configured MCP servers and shares the connections.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Covers the console and desktop case outright: a list in configuration, one connection per
-/// server for the life of the process, and every caller reaching the same ones.
-/// </para>
-/// <para>
-/// Connections are made when something first asks rather than at start-up, because a server
-/// that is slow or down should delay a listing rather than a boot, and because a host may never
-/// ask at all.
-/// </para>
+/// Connections are made on first use, so a slow or down server delays a listing rather than start-up.
 /// </remarks>
 public sealed class StaticMcpClientProvider : IMcpClientProvider, IAsyncDisposable
 {
     /// <summary>
-    /// The servers this host connects to.
+    /// The configured servers.
     /// </summary>
     private readonly IOptionsMonitor<McpAgentToolClientOptions> options;
 
     /// <summary>
-    /// Where whatever caches a listing is found, when a server says its tools changed.
+    /// Resolves listing caches to invalidate when a server's tools change.
     /// </summary>
     /// <remarks>
-    /// Resolved on use rather than injected, and that is not a style choice. The thing that
-    /// caches a listing is the source, the source needs a provider to have anything to list,
-    /// and taking it here would close the loop - which the container answers with a deadlock
-    /// rather than an error worth reading.
+    /// Resolved on use, not injected, to avoid a dependency cycle with the source.
     /// </remarks>
     private readonly IServiceProvider services;
 
     /// <summary>
-    /// What a client logs to.
+    /// The client logger factory.
     /// </summary>
     private readonly ILoggerFactory loggers;
 
     /// <summary>
-    /// Where a server that could not be reached is reported.
+    /// The logger.
     /// </summary>
     private readonly ILogger<StaticMcpClientProvider> logger;
 
     /// <summary>
-    /// The connections, once they have been made.
+    /// The connections, per server.
     /// </summary>
     private readonly ConcurrentDictionary<string, Task<McpClient?>> connections = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Creates a new instance of the provider.
     /// </summary>
-    /// <param name="options">The servers this host connects to.</param>
-    /// <param name="loggers">What a client logs to.</param>
-    /// <param name="logger">Where a server that could not be reached is reported.</param>
-    /// <param name="services">Where whatever caches a listing is found.</param>
+    /// <param name="options">The configured servers.</param>
+    /// <param name="loggers">The client logger factory.</param>
+    /// <param name="logger">The logger.</param>
+    /// <param name="services">The service provider.</param>
     /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
     public StaticMcpClientProvider(
         IOptionsMonitor<McpAgentToolClientOptions> options,
@@ -122,9 +111,9 @@ public sealed class StaticMcpClientProvider : IMcpClientProvider, IAsyncDisposab
     /// Connects to one server, once.
     /// </summary>
     /// <param name="server">The server.</param>
-    /// <param name="settings">The servers this host connects to.</param>
+    /// <param name="settings">The client options.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A task containing the connection, or null where it could not be made.</returns>
+    /// <returns>The connection, or null if it could not be made.</returns>
     private Task<McpClient?> ConnectAsync(McpAgentToolServer server, McpAgentToolClientOptions settings, CancellationToken cancellationToken)
     {
         return this.connections.GetOrAdd(server.Name, _ => OpenAsync());
@@ -155,41 +144,45 @@ public sealed class StaticMcpClientProvider : IMcpClientProvider, IAsyncDisposab
     }
 
     /// <summary>
-    /// Builds the client options, including what to do when a server says its tools changed.
+    /// Builds the client options, including the tools-changed handler.
     /// </summary>
     /// <returns>The options.</returns>
     private McpClientOptions Options()
     {
-        var options = new McpClientOptions();
+        var clientOptions = new McpClientOptions
+        {
+            Handlers =
+            {
+                NotificationHandlers =
+                [
+                    new KeyValuePair<string, Func<JsonRpcNotification, CancellationToken, ValueTask>>(
+                        NotificationMethods.ToolListChangedNotification,
+                        (_, _) =>
+                        {
+                            // which connection said so is not carried on the notification, so every
+                            // listing is dropped. asking each server once more is cheap beside offering
+                            // a model a tool that no longer exists
+                            (this.services.GetService(typeof(IMcpToolInvalidation)) as IMcpToolInvalidation)?.Invalidate();
 
-        options.Handlers.NotificationHandlers =
-        [
-            new KeyValuePair<string, Func<JsonRpcNotification, CancellationToken, ValueTask>>(
-                NotificationMethods.ToolListChangedNotification,
-                (_, _) =>
-                {
-                    // which connection said so is not carried on the notification, so every
-                    // listing is dropped. asking each server once more is cheap beside offering
-                    // a model a tool that no longer exists
-                    (this.services.GetService(typeof(IMcpToolInvalidation)) as IMcpToolInvalidation)?.Invalidate();
+                            return ValueTask.CompletedTask;
+                        })
+                ]
+            }
+        };
 
-                    return ValueTask.CompletedTask;
-                })
-        ];
-
-        return options;
+        return clientOptions;
     }
 
     /// <summary>
-    /// Builds the way to reach a server.
+    /// Builds the transport for a server.
     /// </summary>
     /// <param name="server">The server.</param>
-    /// <param name="loggers">What the transport logs to.</param>
+    /// <param name="loggers">The logger factory.</param>
     /// <returns>The transport.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when the server says both how to run it and where to reach it, or neither.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when the server specifies both a command and an endpoint, or neither.</exception>
     private static IClientTransport Transport(McpAgentToolServer server, ILoggerFactory loggers)
     {
-        if (server.Command is { Length: > 0 } && server.Endpoint is not null)
+        if (server is { Command.Length: > 0, Endpoint: not null })
         {
             throw new InvalidOperationException($"The MCP server '{server.Name}' says both how to run it and where to reach it. It can be one or the other.");
         }

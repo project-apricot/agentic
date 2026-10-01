@@ -4,9 +4,9 @@ using System.Reflection;
 namespace ApricotFramework.Agentic.Tools.Registration;
 
 /// <summary>
-/// What a registration callback writes into.
+/// The <see cref="IAgentToolConventionBuilder"/> handed to registration callbacks.
 /// </summary>
-/// <param name="services">The collection the tool is being registered into.</param>
+/// <param name="services">The service collection.</param>
 internal sealed class AgentToolConventionBuilder(IServiceCollection services) : IAgentToolConventionBuilder
 {
     /// <inheritdoc />
@@ -16,14 +16,10 @@ internal sealed class AgentToolConventionBuilder(IServiceCollection services) : 
     public IList<object> Metadata { get; } = [];
 
     /// <summary>
-    /// Seeds the metadata from the attributes on a type.
+    /// Seeds the metadata from the attributes on a type, including inherited ones.
     /// </summary>
     /// <param name="toolType">The tool's type.</param>
-    /// <returns>The same builder, for chaining.</returns>
-    /// <remarks>
-    /// Inherited, so an attribute on a base class reaches every tool deriving from it - which is
-    /// how a family of tools declares a shared requirement once.
-    /// </remarks>
+    /// <returns>The same builder.</returns>
     internal AgentToolConventionBuilder WithAttributesOf(Type toolType)
     {
         ArgumentNullException.ThrowIfNull(toolType);
@@ -37,14 +33,11 @@ internal sealed class AgentToolConventionBuilder(IServiceCollection services) : 
     }
 
     /// <summary>
-    /// Seeds the metadata from the attributes on a method and the class it is declared in.
+    /// Seeds the metadata from the attributes on a method and its declaring type.
     /// </summary>
     /// <param name="method">The method behind the tool.</param>
-    /// <returns>The same builder, for chaining.</returns>
-    /// <remarks>
-    /// The class first, so a method restating something overrides its family rather than being
-    /// overridden by it - the order metadata is read in is the order it was added.
-    /// </remarks>
+    /// <returns>The same builder.</returns>
+    /// <remarks>Class attributes are added first, so method attributes override them.</remarks>
     internal AgentToolConventionBuilder WithAttributesOf(MethodInfo method)
     {
         ArgumentNullException.ThrowIfNull(method);
@@ -63,10 +56,10 @@ internal sealed class AgentToolConventionBuilder(IServiceCollection services) : 
     }
 
     /// <summary>
-    /// Runs the host's callback and settles what was said.
+    /// Runs the host's callback and returns the final metadata.
     /// </summary>
-    /// <param name="configure">What the host wants to say, or null for nothing.</param>
-    /// <returns>What was said, as it will be read.</returns>
+    /// <param name="configure">The host's callback, or null.</param>
+    /// <returns>The metadata.</returns>
     internal IReadOnlyList<object> Build(Action<IAgentToolConventionBuilder>? configure)
     {
         configure?.Invoke(this);

@@ -5,37 +5,25 @@ using System.Runtime.CompilerServices;
 namespace ApricotFramework.Agentic.Tools.Invocation;
 
 /// <summary>
-/// Opens a scope, decides who is asking, and runs the call inside both.
+/// Opens a scope, resolves the caller, and runs the call inside both.
 /// </summary>
-/// <remarks>
-/// The layer that was missing while every surface built its own context: there is one place
-/// where a call acquires a scope and a caller, and every surface goes through it.
-/// </remarks>
 public class AgentToolExecutor : IAgentToolExecutor
 {
     /// <summary>
-    /// Where a call's scope comes from.
+    /// Source of each call's scope.
     /// </summary>
     private readonly IServiceScopeFactory scopes;
 
     /// <summary>
-    /// How this host decides who is asking.
+    /// Creates the executor.
     /// </summary>
-    private readonly IAgentToolContextFactory contexts;
-
-    /// <summary>
-    /// Creates a new instance of the executor.
-    /// </summary>
-    /// <param name="scopes">Where a call's scope comes from.</param>
-    /// <param name="contexts">How this host decides who is asking.</param>
-    /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
-    public AgentToolExecutor(IServiceScopeFactory scopes, IAgentToolContextFactory contexts)
+    /// <param name="scopes">Source of each call's scope.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="scopes"/> is null.</exception>
+    public AgentToolExecutor(IServiceScopeFactory scopes)
     {
         ArgumentNullException.ThrowIfNull(scopes);
-        ArgumentNullException.ThrowIfNull(contexts);
 
         this.scopes = scopes;
-        this.contexts = contexts;
     }
 
     /// <inheritdoc />
@@ -43,7 +31,7 @@ public class AgentToolExecutor : IAgentToolExecutor
     {
         await using var scope = this.scopes.CreateAsyncScope();
 
-        var context = await this.contexts.CreateAsync(scope.ServiceProvider, cancellationToken).ConfigureAwait(false);
+        var context = await CreateContextAsync(scope, cancellationToken).ConfigureAwait(false);
 
         return await Invoker(scope).GetAvailableToolsAsync(context, cancellationToken).ConfigureAwait(false);
     }
@@ -57,16 +45,25 @@ public class AgentToolExecutor : IAgentToolExecutor
     }
 
     /// <inheritdoc />
-    /// <remarks>
-    /// The scope lives until the last item has been yielded or the caller stops reading,
-    /// whichever comes first. A tool holding a unit of work open across a long sequence is the
-    /// ordinary case, and disposing at the first item would break it.
-    /// </remarks>
+    /// <remarks>Resolves only the one tool: its source, filters and authorization.</remarks>
+    public async ValueTask<AIFunction?> GetAvailableFunctionAsync(string name, CancellationToken cancellationToken = default)
+    {
+        await using var scope = this.scopes.CreateAsyncScope();
+
+        var context = await CreateContextAsync(scope, cancellationToken).ConfigureAwait(false);
+
+        var tool = await Invoker(scope).FindAvailableToolAsync(name, context, cancellationToken).ConfigureAwait(false);
+
+        return tool is null ? null : new ExecutorAgentTool(tool, this);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>The scope lives until the last item is yielded or the caller stops reading, so a tool can hold a unit of work open across the sequence.</remarks>
     public async IAsyncEnumerable<string> InvokeAsync(string name, string? argumentsJson, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         await using var scope = this.scopes.CreateAsyncScope();
 
-        var context = await this.contexts.CreateAsync(scope.ServiceProvider, cancellationToken).ConfigureAwait(false);
+        var context = await CreateContextAsync(scope, cancellationToken).ConfigureAwait(false);
 
         await foreach (var chunk in Invoker(scope).InvokeAsync(name, argumentsJson, context, cancellationToken).ConfigureAwait(false))
         {
@@ -79,20 +76,25 @@ public class AgentToolExecutor : IAgentToolExecutor
     {
         await using var scope = this.scopes.CreateAsyncScope();
 
-        var context = await this.contexts.CreateAsync(scope.ServiceProvider, cancellationToken).ConfigureAwait(false);
+        var context = await CreateContextAsync(scope, cancellationToken).ConfigureAwait(false);
 
         return await Invoker(scope).InvokeCompleteAsync(name, argumentsJson, context, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
+    /// Resolves the caller for one call.
+    /// </summary>
+    /// <param name="scope">The call's scope.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The context.</returns>
+    internal static ValueTask<AgentToolContext> CreateContextAsync(AsyncServiceScope scope, CancellationToken cancellationToken) =>
+        scope.ServiceProvider.GetRequiredService<IAgentToolContextFactory>().CreateAsync(scope.ServiceProvider, cancellationToken);
+
+    /// <summary>
     /// Gets the invoker for one call.
     /// </summary>
-    /// <param name="scope">The scope the call runs in.</param>
+    /// <param name="scope">The call's scope.</param>
     /// <returns>The invoker.</returns>
-    /// <remarks>
-    /// Resolved from the scope rather than held, so that a host whose filters are scoped - one
-    /// reading a per-request tenant, say - gets the scoped ones rather than a set captured when
-    /// the executor was built.
-    /// </remarks>
+    /// <remarks>Resolved from the scope so scoped filters (e.g. per-request tenant) are honored.</remarks>
     private static IAgentToolInvoker Invoker(AsyncServiceScope scope) => scope.ServiceProvider.GetRequiredService<IAgentToolInvoker>();
 }

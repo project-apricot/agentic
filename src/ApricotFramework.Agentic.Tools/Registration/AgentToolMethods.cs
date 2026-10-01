@@ -7,21 +7,18 @@ using System.Reflection;
 namespace ApricotFramework.Agentic.Tools.Registration;
 
 /// <summary>
-/// Describing a tool that is a method.
+/// Describes tools implemented as methods.
 /// </summary>
 /// <remarks>
-/// Everything hard here is already done by <see cref="AIFunctionFactory"/>: it binds the
-/// parameters, generates the schemas, understands a cancellation token and a progress reporter,
-/// and - given a way to make the target - builds a fresh one for every call. Supplying the
-/// caller's own scope as that way is what makes an attributed method behave exactly like a
-/// class-per-tool, and like an endpoint.
+/// Built on <see cref="AIFunctionFactory"/>, with the target resolved from the call's scope so a
+/// method tool behaves like a class-per-tool.
 /// </remarks>
 internal static class AgentToolMethods
 {
     /// <summary>
-    /// Finds the methods declared as tools on a type.
+    /// Finds the tool methods declared on a type.
     /// </summary>
-    /// <param name="toolType">The type to look at.</param>
+    /// <param name="toolType">The type to inspect.</param>
     /// <returns>The methods, in declaration order.</returns>
     internal static IEnumerable<MethodInfo> In(Type toolType)
     {
@@ -34,13 +31,13 @@ internal static class AgentToolMethods
     }
 
     /// <summary>
-    /// Reads what a method declares, and returns it as a function resolved per call.
+    /// Describes a tool method as a function whose target is resolved per call.
     /// </summary>
-    /// <param name="toolType">The type the method belongs to.</param>
+    /// <param name="toolType">The declaring type.</param>
     /// <param name="method">The method behind the tool.</param>
-    /// <param name="metadata">What a host said about it.</param>
+    /// <param name="metadata">Host-supplied metadata.</param>
     /// <returns>The descriptor.</returns>
-    /// <exception cref="ArgumentException">Thrown when the method does not declare itself a tool.</exception>
+    /// <exception cref="ArgumentException">The method is not marked as a tool.</exception>
     internal static AgentToolDescriptor Describe(Type toolType, MethodInfo method, IReadOnlyList<object> metadata)
     {
         ArgumentNullException.ThrowIfNull(toolType);
@@ -82,19 +79,12 @@ internal static class AgentToolMethods
     }
 
     /// <summary>
-    /// Decides how one parameter is filled in.
+    /// Decides how one parameter is bound.
     /// </summary>
     /// <param name="parameter">The parameter.</param>
-    /// <returns>How to bind it, or the default to let the factory decide.</returns>
+    /// <returns>The binding, or the default to let the factory decide.</returns>
     /// <remarks>
-    /// <para>
-    /// A method asking for the invocation gets it, and it does not appear in the schema - a
-    /// model should not be asked to fill in who is calling.
-    /// </para>
-    /// <para>
-    /// Everything else is the factory's business: the parameter list is the argument shape, and
-    /// a cancellation token or a progress reporter is already understood there.
-    /// </para>
+    /// <see cref="AgentToolContext"/> parameters are bound from the invocation and excluded from the schema.
     /// </remarks>
     private static AIFunctionFactoryOptions.ParameterBindingOptions Bind(ParameterInfo parameter) =>
         typeof(AgentToolContext).IsAssignableFrom(parameter.ParameterType)
@@ -106,16 +96,12 @@ internal static class AgentToolMethods
             : default;
 
     /// <summary>
-    /// Fills in a parameter asking for the invocation.
+    /// Binds a context parameter.
     /// </summary>
     /// <param name="parameter">The parameter.</param>
-    /// <param name="arguments">The arguments, carrying the invocation.</param>
-    /// <returns>The invocation.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when the host builds a different kind of context than the method asks for.</exception>
-    /// <remarks>
-    /// A method may ask for a host's own derived context. Saying plainly that the factory built
-    /// something else is better than handing over a null the method will dereference.
-    /// </remarks>
+    /// <param name="arguments">The arguments carrying the context.</param>
+    /// <returns>The context.</returns>
+    /// <exception cref="InvalidOperationException">The host's context is not of the type the method asks for.</exception>
     private static AgentToolContext Context(ParameterInfo parameter, AIFunctionArguments arguments)
     {
         var context = arguments.RequireAgentToolContext();
@@ -128,12 +114,12 @@ internal static class AgentToolMethods
     }
 
     /// <summary>
-    /// Builds the object a call runs against.
+    /// Resolves the instance a call runs against.
     /// </summary>
-    /// <param name="arguments">The arguments, carrying the scope.</param>
-    /// <param name="toolType">The type to build.</param>
+    /// <param name="arguments">The arguments carrying the scope.</param>
+    /// <param name="toolType">The type to resolve.</param>
     /// <returns>The instance.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when the call carries no scope.</exception>
+    /// <exception cref="InvalidOperationException">The call carries no services.</exception>
     private static object Target(AIFunctionArguments arguments, Type toolType)
     {
         var services = arguments.Services

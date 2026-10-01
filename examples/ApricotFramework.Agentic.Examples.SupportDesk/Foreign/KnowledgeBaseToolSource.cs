@@ -61,6 +61,24 @@ public sealed class KnowledgeBaseToolSource : IAgentToolSource
         return ValueTask.FromResult(tools);
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// Everything this source offers sits under one prefix, so a name outside it is answered
+    /// without reaching the foreign server at all - the cheap part of a lookup, and the part only
+    /// the source can know.
+    /// </remarks>
+    public async ValueTask<AgentToolDescriptor?> FindAsync(string name, IAgentToolSourceContext context, CancellationToken cancellationToken = default)
+    {
+        if (!name.StartsWith("support_kb_", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var tools = await this.GetToolsAsync(context, cancellationToken).ConfigureAwait(false);
+
+        return tools.FirstOrDefault(tool => string.Equals(tool.Name, name, StringComparison.Ordinal));
+    }
+
     /// <summary>
     /// Wraps a foreign function on terms this application sets.
     /// </summary>

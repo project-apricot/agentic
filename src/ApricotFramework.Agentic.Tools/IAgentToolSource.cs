@@ -1,33 +1,41 @@
 namespace ApricotFramework.Agentic.Tools;
 
 /// <summary>
-/// Somewhere tools come from.
+/// A provider of tools.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Asked on every listing and every call rather than once at startup, because not every source
-/// can answer once. A source over upstream MCP servers has connections to make, tools that
-/// change while the process runs, and - where a host connects servers per person - a different
-/// answer for each caller.
-/// </para>
-/// <para>
-/// Caching is therefore the source's own business, and the registry holds nothing between calls.
-/// A source with a fixed list returns a field; one reaching a server caches per connection and
-/// refreshes when the server says its tools changed.
-/// </para>
-/// <para>
-/// A source that can fail decides for itself what failure means. Tools you wrote should stop the
-/// host from starting. Tools from somewhere you do not control should be logged and left out -
-/// see <c>CuratingAgentToolSource</c>.
-/// </para>
+/// Asked on every listing and call, not once at startup, since tools may change at runtime or
+/// differ per caller. Caching is the source's responsibility; the registry holds nothing between calls.
 /// </remarks>
 public interface IAgentToolSource
 {
     /// <summary>
     /// Gets the tools this source offers to this caller.
     /// </summary>
-    /// <param name="context">Who is asking, and the scope this composition runs in.</param>
+    /// <param name="context">Who is asking, and the scope to run in.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A task containing the tools.</returns>
+    /// <returns>The tools.</returns>
     ValueTask<IReadOnlyList<AgentToolDescriptor>> GetToolsAsync(IAgentToolSourceContext context, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Finds the tool this source offers this caller under a name.
+    /// </summary>
+    /// <param name="name">The tool name.</param>
+    /// <param name="context">Who is asking, and the scope to run in.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The tool, or null if this source has none by that name.</returns>
+    /// <remarks>
+    /// Used on invocation; the registry stops at the first source that answers. Deliberately has no
+    /// default so implementations answer cheaply rather than scanning the listing. Must agree with
+    /// <see cref="GetToolsAsync"/> for the same caller.
+    /// </remarks>
+    ValueTask<AgentToolDescriptor?> FindAsync(string name, IAgentToolSourceContext context, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets whether this source's tools come from outside this host's control.
+    /// </summary>
+    /// <remarks>
+    /// When true, the registry logs and skips an invalid tool instead of failing. Defaults to false (strict).
+    /// </remarks>
+    bool IsExternal => false;
 }

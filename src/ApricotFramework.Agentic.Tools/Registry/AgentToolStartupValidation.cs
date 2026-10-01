@@ -5,24 +5,11 @@ using Microsoft.Extensions.Hosting;
 namespace ApricotFramework.Agentic.Tools.Registry;
 
 /// <summary>
-/// Looks over the tools this host declared, before it starts serving.
+/// Validates the host's code-registered tools at startup.
 /// </summary>
-/// <remarks>
-/// <para>
-/// A malformed declaration of your own should stop the host, not surface to whoever happens to
-/// ask first. That was free while the registry composed once; now that it composes per call,
-/// something has to do it deliberately.
-/// </para>
-/// <para>
-/// Only the tools registered in code are checked. A source reaching an upstream server cannot be
-/// consulted without a caller and should not be reached at start-up anyway - a service that will
-/// not start over a third party's mistake is worse than one running with fewer tools, which is
-/// what <c>AgentToolCuration.DropRejected</c> is for.
-/// </para>
-/// </remarks>
-/// <param name="scopes">Where the scope to describe the tools in comes from.</param>
-/// <param name="contexts">How this host decides who is asking.</param>
-public sealed class AgentToolStartupValidation(IServiceScopeFactory scopes, IAgentToolContextFactory contexts) : IHostedService
+/// <remarks>External sources are not checked: they need a caller and should not block startup (see <c>AgentToolCuration.DropRejected</c>).</remarks>
+/// <param name="scopes">Source of the scope the tools are described in.</param>
+public sealed class AgentToolStartupValidation(IServiceScopeFactory scopes) : IHostedService
 {
     /// <inheritdoc />
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -36,7 +23,7 @@ public sealed class AgentToolStartupValidation(IServiceScopeFactory scopes, IAge
             return;
         }
 
-        var context = await contexts.CreateAsync(scope.ServiceProvider, cancellationToken).ConfigureAwait(false);
+        var context = await scope.ServiceProvider.GetRequiredService<IAgentToolContextFactory>().CreateAsync(scope.ServiceProvider, cancellationToken).ConfigureAwait(false);
 
         var validators = scope.ServiceProvider.GetServices<IAgentToolValidator>().ToList();
 

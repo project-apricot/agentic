@@ -1,12 +1,10 @@
 namespace ApricotFramework.Agentic.Tools.Exceptions;
 
 /// <summary>
-/// A tool's declaration is malformed, or two tools claim the same name.
+/// A tool declaration is malformed, or two tools claim the same name.
 /// </summary>
 /// <remarks>
-/// Thrown while the registry is being built, which is to say at startup. A tool nothing can invoke
-/// correctly is worth refusing to start over, rather than advertising in a listing a consumer has
-/// already cached by the time anyone notices.
+/// Thrown while the registry is built, i.e. at startup.
 /// </remarks>
 public class AgentToolDeclarationException : AgentToolException
 {

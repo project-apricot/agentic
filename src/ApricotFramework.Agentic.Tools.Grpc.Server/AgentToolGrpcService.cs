@@ -5,14 +5,12 @@ using Grpc.Core;
 namespace ApricotFramework.Agentic.Tools.Grpc.Server;
 
 /// <summary>
-/// This host's tools, over the wire.
+/// Serves this host's tools over gRPC.
 /// </summary>
 /// <remarks>
-/// A thin projection and nothing more. Everything a caller could disagree with - who they are,
-/// which tools they may reach, what a failure means - is decided by the executor and its
-/// filters, exactly as it is for an HTTP endpoint or an MCP session.
+/// A thin projection; identity, visibility and failure handling are decided by the executor and its filters.
 /// </remarks>
-/// <param name="executor">Where a listing and a call go.</param>
+/// <param name="executor">The tool executor.</param>
 public sealed class AgentToolGrpcService(IAgentToolExecutor executor) : AgentTools.AgentToolsBase
 {
     /// <inheritdoc />
@@ -49,8 +47,7 @@ public sealed class AgentToolGrpcService(IAgentToolExecutor executor) : AgentToo
 
     /// <inheritdoc />
     /// <remarks>
-    /// A failure part-way through fails the call rather than closing the stream quietly, so a
-    /// caller cannot mistake a truncated sequence for a complete one.
+    /// A failure mid-stream fails the call, so a truncated sequence is not mistaken for a complete one.
     /// </remarks>
     public override async Task InvokeToolStream(InvokeToolRequest request, IServerStreamWriter<InvokeToolChunk> responseStream, ServerCallContext context)
     {
@@ -72,19 +69,15 @@ public sealed class AgentToolGrpcService(IAgentToolExecutor executor) : AgentToo
     }
 
     /// <summary>
-    /// Reads the arguments, treating an absent payload as none.
+    /// Reads the arguments, treating an empty payload as none.
     /// </summary>
     /// <param name="request">The call.</param>
-    /// <returns>The arguments, or null where there are none.</returns>
-    /// <remarks>
-    /// Proto3 cannot tell an unset string from an empty one, which is exactly why the schemas
-    /// here are JSON and not protobuf. For this one field the two mean the same thing.
-    /// </remarks>
+    /// <returns>The arguments, or null.</returns>
     private static string? Arguments(InvokeToolRequest request) =>
         string.IsNullOrWhiteSpace(request.ArgumentsJson) ? null : request.ArgumentsJson;
 
     /// <summary>
-    /// Describes one tool the way the contract does.
+    /// Converts a tool descriptor to its contract declaration.
     /// </summary>
     /// <param name="tool">The tool.</param>
     /// <returns>The declaration.</returns>
@@ -117,20 +110,60 @@ public sealed class AgentToolGrpcService(IAgentToolExecutor executor) : AgentToo
     }
 
     /// <summary>
-    /// Turns a failure into a status a caller can act on, or not retry.
+    /// Converts a tool exception to a status.
     /// </summary>
     /// <param name="exception">The failure.</param>
-    /// <returns>The status.</returns>
-    /// <remarks>
-    /// The distinction worth preserving is refusal against fault. A refusal that reads as a
-    /// fault invites a retry, and whatever is driving the agent will accept the invitation.
-    /// </remarks>
+    /// <returns>The status, with <see cref="AgentToolTrailers"/> telling a refusal from a tool failure.</returns>
     private static RpcException Describe(AgentToolException exception) => exception switch
     {
-        AgentToolNotFoundException => new RpcException(new Status(StatusCode.NotFound, exception.Message)),
-        AgentToolAccessDeniedException => new RpcException(new Status(StatusCode.PermissionDenied, exception.Message)),
-        AgentToolArgumentException => new RpcException(new Status(StatusCode.InvalidArgument, exception.Message)),
-        AgentToolNotInvocableException => new RpcException(new Status(StatusCode.Unimplemented, exception.Message)),
-        _ => new RpcException(new Status(StatusCode.Internal, exception.Message))
+        AgentToolNotFoundException => Refuse(StatusCode.NotFound, AgentToolTrailers.Refusals.NotFound, exception),
+        AgentToolUnauthenticatedException => Refuse(StatusCode.Unauthenticated, AgentToolTrailers.Refusals.Unauthenticated, exception),
+        AgentToolAccessDeniedException => Refuse(StatusCode.PermissionDenied, AgentToolTrailers.Refusals.AccessDenied, exception),
+        AgentToolArgumentException => Refuse(StatusCode.InvalidArgument, AgentToolTrailers.Refusals.InvalidArguments, exception),
+        AgentToolNotInvocableException => Refuse(StatusCode.Unimplemented, AgentToolTrailers.Refusals.NotInvocable, exception),
+        AgentToolFailedException failed => Fail(failed),
+        _ => Fail(new AgentToolFailedException(AgentToolFailureKind.Fault, exception.Message, exception))
     };
+
+    /// <summary>
+    /// Describes a framework refusal.
+    /// </summary>
+    /// <param name="code">The status code.</param>
+    /// <param name="reason">The refusal reason.</param>
+    /// <param name="exception">The refusal.</param>
+    /// <returns>The status, with its trailers.</returns>
+    private static RpcException Refuse(StatusCode code, string reason, AgentToolException exception) =>
+        new(new Status(code, exception.Message), new Metadata
+        {
+            { AgentToolTrailers.Outcome, AgentToolTrailers.Refused },
+            { AgentToolTrailers.Reason, reason }
+        });
+
+    /// <summary>
+    /// Describes a failure of the tool's operation.
+    /// </summary>
+    /// <param name="exception">The failure.</param>
+    /// <returns>The status, with its trailers.</returns>
+    private static RpcException Fail(AgentToolFailedException exception)
+    {
+        var (code, reason) = exception.Kind switch
+        {
+            AgentToolFailureKind.NotFound => (StatusCode.NotFound, AgentToolTrailers.Failures.NotFound),
+            AgentToolFailureKind.Invalid => (StatusCode.InvalidArgument, AgentToolTrailers.Failures.Invalid),
+            AgentToolFailureKind.Conflict => (StatusCode.FailedPrecondition, AgentToolTrailers.Failures.Conflict),
+            AgentToolFailureKind.Denied => (StatusCode.PermissionDenied, AgentToolTrailers.Failures.Denied),
+            AgentToolFailureKind.Unauthenticated => (StatusCode.Unauthenticated, AgentToolTrailers.Failures.Unauthenticated),
+            AgentToolFailureKind.RateLimited => (StatusCode.ResourceExhausted, AgentToolTrailers.Failures.RateLimited),
+            AgentToolFailureKind.Unavailable => (StatusCode.Unavailable, AgentToolTrailers.Failures.Unavailable),
+            AgentToolFailureKind.Timeout => (StatusCode.DeadlineExceeded, AgentToolTrailers.Failures.Timeout),
+            _ => (StatusCode.Internal, AgentToolTrailers.Failures.Fault)
+        };
+
+        return new RpcException(new Status(code, exception.Message), new Metadata
+        {
+            { AgentToolTrailers.Outcome, AgentToolTrailers.Failed },
+            { AgentToolTrailers.Reason, reason },
+            { AgentToolTrailers.Retryable, exception.IsRetryable ? "true" : "false" }
+        });
+    }
 }

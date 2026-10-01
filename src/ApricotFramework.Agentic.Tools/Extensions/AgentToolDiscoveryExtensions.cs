@@ -7,31 +7,22 @@ using System.Runtime.CompilerServices;
 namespace ApricotFramework.Agentic.Tools.Extensions;
 
 /// <summary>
-/// Registering whatever tools an assembly holds.
+/// Registers the tools an assembly contains.
 /// </summary>
 /// <remarks>
-/// <para>
-/// An oversized tool surface makes a model worse at choosing between what is on it,
-/// and scanning is how a surface grows without anyone deciding that it should.
-/// </para>
-/// <para>
-/// Scan narrowly. An assembly that also holds tools written for a test is how a surface acquires
-/// tools nobody meant to offer, and the predicate is there for that.
-/// </para>
+/// Scan narrowly: large tool surfaces degrade model tool choice, and broad scans can pick up tools
+/// not meant to be offered (e.g. test tools). Use the predicate to exclude them.
 /// </remarks>
 public static class AgentToolDiscoveryExtensions
 {
     /// <summary>
-    /// Adds tools by their types.
+    /// Adds tools by type.
     /// </summary>
     /// <param name="services">The service collection.</param>
-    /// <param name="toolTypes">The tools to add.</param>
-    /// <param name="configure">What else to say about each of them, or null for nothing.</param>
-    /// <returns>The same collection, for chaining.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
-    /// <remarks>
-    /// Takes both kinds: a class that is a tool, and a class whose methods are tools.
-    /// </remarks>
+    /// <param name="toolTypes">The tool types: tool classes or classes with tool methods.</param>
+    /// <param name="configure">Extra metadata for each tool, or null.</param>
+    /// <returns>The same collection.</returns>
+    /// <exception cref="ArgumentNullException">An argument is null.</exception>
     public static IServiceCollection AddAgentToolTypes(this IServiceCollection services, IEnumerable<Type> toolTypes, Action<IAgentToolConventionBuilder>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -56,16 +47,14 @@ public static class AgentToolDiscoveryExtensions
     /// Adds every tool found in an assembly.
     /// </summary>
     /// <param name="services">The service collection.</param>
-    /// <param name="assembly">The assembly to look in, or null for the one calling this.</param>
-    /// <param name="predicate">A further test each candidate has to pass, or null for none.</param>
-    /// <param name="configure">What else to say about each tool found, or null for nothing.</param>
-    /// <returns>The same collection, for chaining.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="services"/> is null.</exception>
+    /// <param name="assembly">The assembly to scan, or null for the calling assembly.</param>
+    /// <param name="predicate">An extra filter on candidate types, or null.</param>
+    /// <param name="configure">Extra metadata for each tool, or null.</param>
+    /// <returns>The same collection.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is null.</exception>
     /// <remarks>
-    /// Finds concrete, non-generic classes deriving from <see cref="AgentTool"/>, and classes
-    /// carrying <see cref="AgentToolTypeAttribute"/>. A tool is found because of what it is, not
-    /// because it carries a marker nobody remembers - a second thing to remember would be a
-    /// second thing to forget, with the failure being a tool that silently is not there.
+    /// Finds concrete, non-generic <see cref="AgentTool"/> classes and classes marked with
+    /// <see cref="AgentToolTypeAttribute"/>.
     /// </remarks>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static IServiceCollection AddAgentToolsFromAssembly(
@@ -90,9 +79,9 @@ public static class AgentToolDiscoveryExtensions
     /// Adds every tool found in several assemblies.
     /// </summary>
     /// <param name="services">The service collection.</param>
-    /// <param name="assemblies">The assemblies to look in.</param>
-    /// <returns>The same collection, for chaining.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
+    /// <param name="assemblies">The assemblies to scan.</param>
+    /// <returns>The same collection.</returns>
+    /// <exception cref="ArgumentNullException">An argument is null.</exception>
     public static IServiceCollection AddAgentToolsFromAssemblies(this IServiceCollection services, params Assembly[] assemblies)
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -103,18 +92,14 @@ public static class AgentToolDiscoveryExtensions
     }
 
     /// <summary>
-    /// Adds every tool found in the assembly a type belongs to.
+    /// Adds every tool found in the assembly containing a type.
     /// </summary>
-    /// <typeparam name="TMarker">Any type from the assembly to look at.</typeparam>
+    /// <typeparam name="TMarker">Any type from the assembly to scan.</typeparam>
     /// <param name="services">The service collection.</param>
-    /// <param name="predicate">A further test each candidate has to pass, or null for none.</param>
-    /// <param name="configure">What else to say about each tool found, or null for nothing.</param>
-    /// <returns>The same collection, for chaining.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="services"/> is null.</exception>
-    /// <remarks>
-    /// Says which assembly by pointing at something in it, which survives a rename where a string
-    /// would not.
-    /// </remarks>
+    /// <param name="predicate">An extra filter on candidate types, or null.</param>
+    /// <param name="configure">Extra metadata for each tool, or null.</param>
+    /// <returns>The same collection.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is null.</exception>
     public static IServiceCollection AddAgentToolsFromAssemblyContaining<TMarker>(
         this IServiceCollection services,
         Func<Type, bool>? predicate = null,

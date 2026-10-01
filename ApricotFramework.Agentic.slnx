@@ -19,5 +19,6 @@
     <Project Path="tests/ApricotFramework.Agentic.Tools.Tests/ApricotFramework.Agentic.Tools.Tests.csproj" />
     <Project Path="tests/ApricotFramework.Agentic.Tools.AspNetCore.Tests/ApricotFramework.Agentic.Tools.AspNetCore.Tests.csproj" />
     <Project Path="tests/ApricotFramework.Agentic.Tools.Grpc.Tests/ApricotFramework.Agentic.Tools.Grpc.Tests.csproj" />
+    <Project Path="tests/ApricotFramework.Agentic.Tools.Mcp.Server.Tests/ApricotFramework.Agentic.Tools.Mcp.Server.Tests.csproj" />
   </Folder>
 </Solution>

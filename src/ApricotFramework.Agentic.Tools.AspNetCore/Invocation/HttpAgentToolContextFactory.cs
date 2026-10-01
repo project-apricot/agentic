@@ -3,23 +3,14 @@ using Microsoft.AspNetCore.Http;
 namespace ApricotFramework.Agentic.Tools.AspNetCore.Invocation;
 
 /// <summary>
-/// The caller is whoever made the request in progress.
+/// Supplies the caller of the request in progress.
 /// </summary>
 /// <remarks>
-/// <para>
-/// An unauthenticated identity is reported as no caller at all, because the two mean different
-/// things to a filter: null says this host has nobody in mind, which is what an anonymous request
-/// amounts to, and the requirements then decide.
-/// </para>
-/// <para>
-/// The services come from the scope the executor opened, not from the request. That looks
-/// surprising and is deliberate: a tool call may outlive the request that started it - a
-/// streaming result read slowly, a loop handed a listing - and a tool reaching into a disposed
-/// request scope is the failure that produces. A tool that genuinely wants the request reads
-/// <c>IHttpContextAccessor</c>, which is registered here for that reason.
-/// </para>
+/// An unauthenticated identity is reported as no caller. Services come from the executor's scope,
+/// not the request's, because a tool call may outlive its request; a tool needing the request reads
+/// <c>IHttpContextAccessor</c>, registered here for that reason.
 /// </remarks>
-/// <param name="accessor">The request in progress, where there is one.</param>
+/// <param name="accessor">The request in progress, if any.</param>
 public sealed class HttpAgentToolContextFactory(IHttpContextAccessor accessor) : IAgentToolContextFactory
 {
     /// <inheritdoc />

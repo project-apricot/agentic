@@ -9,6 +9,7 @@ using Grpc.Core.Interceptors;
 using Grpc.Net.ClientFactory;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using System.Security.Claims;
 
 namespace ApricotFramework.Agentic.Tools.Grpc.Tests;
 
@@ -20,7 +21,7 @@ public class GrpcAgentToolSourceTests(Fleet fleet) : IClassFixture<Fleet>
 {
     private readonly ClientLog clients = new();
 
-    private ServiceProvider Host(ClientRegistration how, Action<GrpcAgentToolSourceOptions>? billing = null, ErrorMapping mapping = ErrorMapping.None)
+    private ServiceProvider Host(ClientRegistration how, Action<GrpcAgentToolSourceOptions>? billing = null, ErrorMapping mapping = ErrorMapping.None, Action<IServiceCollection>? more = null)
     {
         var services = new ServiceCollection();
 
@@ -49,6 +50,8 @@ public class GrpcAgentToolSourceTests(Fleet fleet) : IClassFixture<Fleet>
             services.AddGrpcAgentTools("billing", options => Billing(options, billing));
             services.AddGrpcAgentTools("tickets", options => options.Prefix = "tickets_");
         }
+
+        more?.Invoke(services);
 
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
     }
@@ -81,7 +84,9 @@ public class GrpcAgentToolSourceTests(Fleet fleet) : IClassFixture<Fleet>
 
         var tools = await executor.GetAvailableToolsAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal(["billing_invoices_fail", "billing_invoices_get", "tickets_invoices_get"], tools.Select(tool => tool.Name).Order(StringComparer.Ordinal));
+        Assert.Equal(
+            ["billing_invoices_busy", "billing_invoices_fail", "billing_invoices_get", "billing_invoices_gone", "billing_invoices_locked", "billing_invoices_missing", "tickets_invoices_get"],
+            tools.Select(tool => tool.Name).Order(StringComparer.Ordinal));
 
         Assert.Equal("\"billing:7\"", await executor.InvokeCompleteAsync("billing_invoices_get", """{"id":7}""", TestContext.Current.CancellationToken));
         Assert.Equal("\"tickets:7\"", await executor.InvokeCompleteAsync("tickets_invoices_get", """{"id":7}""", TestContext.Current.CancellationToken));
@@ -235,6 +240,191 @@ public class GrpcAgentToolSourceTests(Fleet fleet) : IClassFixture<Fleet>
         Assert.IsType(mapping == ErrorMapping.None ? typeof(RpcException) : typeof(ErrorDefinitionException), thrown);
     }
 
+    [Theory]
+    [InlineData(ErrorMapping.None)]
+    [InlineData(ErrorMapping.OnTheClient)]
+    [InlineData(ErrorMapping.ContainerWide)]
+    public async Task ARecordThatIsNotThere_ArrivesAsAFailure_NotAsAMissingTool(ErrorMapping mapping)
+    {
+        // the same NOT_FOUND on the wire as a tool that is not offered; the trailers are what tell
+        // them apart, whatever the host does to the exception on the way in
+        var executor = Host(ClientRegistration.Typed, mapping: mapping).GetRequiredService<IAgentToolExecutor>();
+
+        var exception = await Assert.ThrowsAsync<AgentToolFailedException>(
+            () => executor.InvokeCompleteAsync("billing_invoices_missing", """{"id":7}""", TestContext.Current.CancellationToken));
+
+        Assert.Equal(AgentToolFailureKind.NotFound, exception.Kind);
+        Assert.False(exception.IsRetryable);
+        Assert.Contains("No invoice 7", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnUntrailedStatusWhoseCodeIsUnambiguous_IsStillARefusal()
+    {
+        // an endpoint's own authentication refuses before any tool runs, and sends no trailers
+        var executor = Host(ClientRegistration.Typed).GetRequiredService<IAgentToolExecutor>();
+
+        var exception = await Assert.ThrowsAsync<AgentToolAccessDeniedException>(
+            () => executor.InvokeCompleteAsync("billing_invoices_locked", null, TestContext.Current.CancellationToken));
+
+        Assert.Contains("Locked by the ledger", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnUntrailedNotFound_IsNotGuessedAt()
+    {
+        // tool or record? without the trailers nobody can say, so it is left as the host has it
+        var executor = Host(ClientRegistration.Typed).GetRequiredService<IAgentToolExecutor>();
+
+        var thrown = await Record.ExceptionAsync(
+            () => executor.InvokeCompleteAsync("billing_invoices_gone", null, TestContext.Current.CancellationToken));
+
+        Assert.IsType<RpcException>(thrown);
+    }
+
+    [Fact]
+    public async Task ATimeoutInsideTheTool_ArrivesAsRetryable()
+    {
+        var executor = Host(ClientRegistration.Typed).GetRequiredService<IAgentToolExecutor>();
+
+        var exception = await Assert.ThrowsAsync<AgentToolFailedException>(
+            () => executor.InvokeCompleteAsync("billing_invoices_busy", null, TestContext.Current.CancellationToken));
+
+        Assert.Equal(AgentToolFailureKind.Timeout, exception.Kind);
+        Assert.True(exception.IsRetryable);
+    }
+
+    [Fact]
+    public async Task RefusedForWantOfACaller_ArrivesAsUnauthenticated()
+    {
+        var executor = Host(ClientRegistration.Typed, billing => billing.Lifetime = TimeSpan.FromHours(1)).GetRequiredService<IAgentToolExecutor>();
+
+        await executor.GetAvailableToolsAsync(TestContext.Current.CancellationToken);
+
+        fleet.Billing.Gate.RequireACaller("invoices_get");
+
+        try
+        {
+            await Assert.ThrowsAsync<AgentToolUnauthenticatedException>(
+                () => executor.InvokeCompleteAsync("billing_invoices_get", """{"id":1}""", TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            fleet.Billing.Gate.Reset();
+        }
+    }
+
+    [Fact]
+    public async Task AServiceThatIsDown_CostsItsTools_AndNothingElse()
+    {
+        var executor = Host(ClientRegistration.Typed, more: services =>
+        {
+            services.AddGrpcClient<AgentTools.AgentToolsClient>("down", options => options.Address = new Uri("http://down.invalid"))
+                .ConfigurePrimaryHttpMessageHandler(() => new Unreachable());
+
+            services.AddGrpcAgentTools("down", options => options.Prefix = "down_");
+        }).GetRequiredService<IAgentToolExecutor>();
+
+        var tools = await executor.GetAvailableToolsAsync(TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(tools, tool => tool.Name.StartsWith("down_", StringComparison.Ordinal));
+        Assert.Contains(tools, tool => tool.Name == "billing_invoices_get");
+
+        Assert.Equal("\"billing:3\"", await executor.InvokeCompleteAsync("billing_invoices_get", """{"id":3}""", TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task ACallToOneService_DoesNotReachAnother()
+    {
+        var executor = Host(ClientRegistration.Typed).GetRequiredService<IAgentToolExecutor>();
+
+        await executor.InvokeCompleteAsync("tickets_invoices_get", """{"id":1}""", TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, this.clients.For("billing"));
+    }
+
+    [Fact]
+    public async Task ACachedListing_IsHeldPerCaller()
+    {
+        await using var host = Host(ClientRegistration.Typed);
+
+        var source = GrpcAgentToolSource.ForClient<BillingAgentToolsClient>(new GrpcAgentToolSourceOptions { Lifetime = TimeSpan.FromHours(1) });
+
+        await List(host, source, "alice");
+        await List(host, source, "alice");
+        await List(host, source, "bob");
+
+        // alice asked twice and was answered from the cache once; bob was never given alice's answer
+        Assert.Equal(2, this.clients.For("billing"));
+    }
+
+    [Fact]
+    public async Task ALookup_IsAnsweredFromTheCallersCachedListing()
+    {
+        await using var host = Host(ClientRegistration.Typed);
+
+        var source = GrpcAgentToolSource.ForClient<BillingAgentToolsClient>(new GrpcAgentToolSourceOptions { Lifetime = TimeSpan.FromHours(1) });
+
+        await List(host, source, "alice");
+
+        await using var scope = host.CreateAsyncScope();
+
+        var alice = new AgentToolContext { Services = scope.ServiceProvider, User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", "alice")], "test")) };
+
+        Assert.NotNull(await source.FindAsync("invoices_get", alice, TestContext.Current.CancellationToken));
+        Assert.Null(await source.FindAsync("invoices_unknown", alice, TestContext.Current.CancellationToken));
+
+        // both lookups read the index of the listing already held - no further call to the service
+        Assert.Equal(1, this.clients.For("billing"));
+    }
+
+    [Fact]
+    public async Task ACallerTheCacheKeyCannotPlace_IsNeverCached()
+    {
+        await using var host = Host(ClientRegistration.Typed);
+
+        var source = GrpcAgentToolSource.ForClient<BillingAgentToolsClient>(new GrpcAgentToolSourceOptions
+        {
+            Lifetime = TimeSpan.FromHours(1),
+            CacheKey = _ => null
+        });
+
+        await List(host, source, "alice");
+        await List(host, source, "alice");
+
+        Assert.Equal(2, this.clients.For("billing"));
+    }
+
+    [Fact]
+    public async Task AToolWhoseSchemaCannotBeRead_IsLeftOut_AndItsNeighboursAreOffered()
+    {
+        var source = GrpcAgentToolSource.ForClient<BillingAgentToolsClient>(new GrpcAgentToolSourceOptions());
+
+        var offer = typeof(GrpcAgentToolSource).GetMethod("Offer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+
+        var broken = new Contract.AgentToolDeclaration { Name = "broken", InputSchema = "{not json" };
+        var fine = new Contract.AgentToolDeclaration { Name = "fine", InputSchema = """{"type":"object"}""" };
+
+        Assert.Null(offer.Invoke(source, [broken, new GrpcAgentToolSourceOptions()]));
+        Assert.NotNull(offer.Invoke(source, [fine, new GrpcAgentToolSourceOptions()]));
+    }
+
+    private static async Task List(ServiceProvider host, GrpcAgentToolSource source, string subject)
+    {
+        await using var scope = host.CreateAsyncScope();
+
+        var user = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", subject)], "test"));
+
+        await source.GetToolsAsync(new AgentToolContext { Services = scope.ServiceProvider, User = user }, TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>A service nobody can reach.</summary>
+    private sealed class Unreachable : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            throw new HttpRequestException("Connection refused.");
+    }
+
     [Fact]
     public async Task ATypeNeverRegisteredAsAClient_SaysHowToRegisterIt()
     {
@@ -245,7 +435,7 @@ public class GrpcAgentToolSourceTests(Fleet fleet) : IClassFixture<Fleet>
 
         var executor = services.BuildServiceProvider().GetRequiredService<IAgentToolExecutor>();
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<AgentToolConfigurationException>(
             async () => await executor.GetAvailableToolsAsync(TestContext.Current.CancellationToken));
 
         Assert.Contains("AddGrpcClient<BillingAgentToolsClient>()", exception.Message, StringComparison.Ordinal);
@@ -262,7 +452,7 @@ public class GrpcAgentToolSourceTests(Fleet fleet) : IClassFixture<Fleet>
 
         var executor = services.BuildServiceProvider().GetRequiredService<IAgentToolExecutor>();
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<AgentToolConfigurationException>(
             async () => await executor.GetAvailableToolsAsync(TestContext.Current.CancellationToken));
 
         Assert.Contains("'biling'", exception.Message, StringComparison.Ordinal);

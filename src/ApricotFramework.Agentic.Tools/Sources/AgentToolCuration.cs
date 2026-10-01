@@ -3,32 +3,18 @@ using ApricotFramework.Agentic.Tools.Exceptions;
 namespace ApricotFramework.Agentic.Tools.Sources;
 
 /// <summary>
-/// The curators a host is most likely to want, for use with <see cref="CuratingAgentToolSource"/>.
+/// Common curators for <see cref="CuratingAgentToolSource"/>.
 /// </summary>
-/// <remarks>
-/// Each returns a function rather than a source, so they nest: a host prefixes a foreign server's
-/// names, attaches what should gate them, then drops whatever still would not pass, and the three
-/// are separate decisions made in a readable order.
-/// </remarks>
+/// <remarks>Each returns a function, so they compose.</remarks>
 public static class AgentToolCuration
 {
     /// <summary>
-    /// Offers every tool under a prefixed name.
+    /// Prefixes every tool's name.
     /// </summary>
-    /// <param name="prefix">What to put in front of each name.</param>
+    /// <param name="prefix">The prefix.</param>
     /// <returns>The curator.</returns>
-    /// <exception cref="ArgumentException">Thrown when <paramref name="prefix"/> is null or blank.</exception>
-    /// <remarks>
-    /// <para>
-    /// The answer to a foreign server whose names were chosen without knowing what they would sit
-    /// beside. A collision is genuinely ambiguous, and the registry refuses it rather than picking
-    /// one, so putting the names in a space of their own is what keeps that from happening.
-    /// </para>
-    /// <para>
-    /// Nothing wraps the function. A prefixed tool is the same function under a different
-    /// declaration, so a consumer reaching through it for what it really is still finds it.
-    /// </para>
-    /// </remarks>
+    /// <exception cref="ArgumentException"><paramref name="prefix"/> is null or blank.</exception>
+    /// <remarks>Avoids name clashes, which the registry rejects. The function is not wrapped.</remarks>
     public static Func<AgentToolDescriptor, AgentToolDescriptor?> Prefixing(string prefix)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(prefix);
@@ -37,16 +23,12 @@ public static class AgentToolCuration
     }
 
     /// <summary>
-    /// Adds to what was said about every tool.
+    /// Adds metadata to every tool.
     /// </summary>
-    /// <param name="metadata">What to add.</param>
+    /// <param name="metadata">The metadata.</param>
     /// <returns>The curator.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="metadata"/> is null.</exception>
-    /// <remarks>
-    /// How a foreign tool gets gated. Nothing a host fetches carries an authorization attribute,
-    /// so whatever should govern it is attached here - pass the same attributes
-    /// <c>RequireAuthorization</c> would have added.
-    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="metadata"/> is null.</exception>
+    /// <remarks>How external tools get authorization metadata; pass what <c>RequireAuthorization</c> would add.</remarks>
     public static Func<AgentToolDescriptor, AgentToolDescriptor?> Adding(params object[] metadata)
     {
         ArgumentNullException.ThrowIfNull(metadata);
@@ -55,15 +37,26 @@ public static class AgentToolCuration
     }
 
     /// <summary>
-    /// Offers only the tools passing a test.
+    /// Adds metadata to each tool, computed from the tool.
     /// </summary>
-    /// <param name="predicate">The test each tool has to pass.</param>
+    /// <param name="metadata">The metadata for a tool, appended to its existing metadata.</param>
+    /// <returns>The curation.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="metadata"/> is null.</exception>
+    /// <remarks>Keeps existing metadata, unlike <see cref="AgentToolDescriptor.With"/>.</remarks>
+    public static Func<AgentToolDescriptor, AgentToolDescriptor?> AddingFor(Func<AgentToolDescriptor, IEnumerable<object>> metadata)
+    {
+        ArgumentNullException.ThrowIfNull(metadata);
+
+        return tool => tool.WithMetadata([.. metadata(tool)]);
+    }
+
+    /// <summary>
+    /// Keeps only tools matching a predicate.
+    /// </summary>
+    /// <param name="predicate">The predicate.</param>
     /// <returns>The curator.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="predicate"/> is null.</exception>
-    /// <remarks>
-    /// An allowlist, most usefully. A foreign server can add a tool after a host has looked at
-    /// what it offers, and naming the ones that were reviewed is the only way that stays true.
-    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="predicate"/> is null.</exception>
+    /// <remarks>Typically an allowlist, so tools added upstream later are not offered unreviewed.</remarks>
     public static Func<AgentToolDescriptor, AgentToolDescriptor?> Where(Func<AgentToolDescriptor, bool> predicate)
     {
         ArgumentNullException.ThrowIfNull(predicate);
@@ -72,29 +65,13 @@ public static class AgentToolCuration
     }
 
     /// <summary>
-    /// Leaves out the tools validation would refuse.
+    /// Drops tools that validation would reject.
     /// </summary>
-    /// <param name="validators">The checks to apply, which should be the ones the registry applies.</param>
-    /// <param name="onRejected">Told about each tool left out and why. Worth logging.</param>
+    /// <param name="validators">The validators; should match the registry's.</param>
+    /// <param name="onRejected">Called for each dropped tool and reason; log it.</param>
     /// <returns>The curator.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="validators"/> is null.</exception>
-    /// <remarks>
-    /// <para>
-    /// So that one malformed declaration from somewhere a host does not control costs it that tool
-    /// rather than all of them. The registry refuses a tool it cannot accept, which is right for
-    /// tools a host wrote - a host should not ship one it got wrong - and wrong for tools it
-    /// merely reached.
-    /// </para>
-    /// <para>
-    /// It cannot catch everything, and the exception is worth knowing: a name two tools share is
-    /// only visible once both are in front of the registry, so no per-tool check will find it.
-    /// <see cref="Prefixing"/> is how that one is avoided rather than detected.
-    /// </para>
-    /// <para>
-    /// Report what it drops somewhere a person will see. A tool silently absent is the failure
-    /// nobody can diagnose, and this turns a loud one into a quiet one on purpose.
-    /// </para>
-    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="validators"/> is null.</exception>
+    /// <remarks>Cannot detect duplicate names, which need the full listing; use <see cref="Prefixing"/> to avoid those.</remarks>
     public static Func<AgentToolDescriptor, AgentToolDescriptor?> DropRejected(
         IEnumerable<IAgentToolValidator> validators,
         Action<AgentToolDescriptor, AgentToolDeclarationException>? onRejected = null)

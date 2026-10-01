@@ -1,10 +1,10 @@
 namespace ApricotFramework.Agentic.Tools.Exceptions;
 
 /// <summary>
-/// No tool is declared under the name a caller asked for.
+/// No tool is offered under the requested name.
 /// </summary>
 /// <remarks>
-/// Worth reporting to a model as an argument it can correct rather than as a missing record: the name came from a listing it was given, so getting one wrong is a mistake it can fix by looking again.
+/// Reported to a model as a correctable argument: it can look at the listing again.
 /// </remarks>
 public class AgentToolNotFoundException : AgentToolException
 {

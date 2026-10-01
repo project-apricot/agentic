@@ -4,19 +4,11 @@ using Microsoft.AspNetCore.Authorization;
 namespace ApricotFramework.Agentic.Tools.AspNetCore.Extensions;
 
 /// <summary>
-/// Says what a registered tool requires of its callers.
+/// Declares what a registered tool requires of its callers.
 /// </summary>
 /// <remarks>
-/// <para>
-/// The counterpart to an authorization attribute on a tool class, for the cases where there is no
-/// class to put one on - a tool adapted from a function, or from a foreign server. Shaped after
-/// the minimal API extensions of the same name and implemented the same way: each appends to the
-/// registration's metadata, which is the only mechanism there is.
-/// </para>
-/// <para>
-/// Additive. What is said here joins whatever the tool's type declares rather than replacing it,
-/// so a tool carrying an attribute and registered with a policy requires both.
-/// </para>
+/// For tools with no class to put an attribute on. Additive: requirements here join those
+/// declared on the tool's type, so both apply.
 /// </remarks>
 public static class AgentToolConventionBuilderExtensions
 {
@@ -24,7 +16,7 @@ public static class AgentToolConventionBuilderExtensions
     /// Requires an authenticated caller.
     /// </summary>
     /// <param name="builder">The tool.</param>
-    /// <returns>The same builder for chaining.</returns>
+    /// <returns>The same builder.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/> is null.</exception>
     public static IAgentToolConventionBuilder RequireAuthorization(this IAgentToolConventionBuilder builder) =>
         builder.RequireAuthorization(new AuthorizeAttribute());
@@ -33,8 +25,8 @@ public static class AgentToolConventionBuilderExtensions
     /// Requires the named policies.
     /// </summary>
     /// <param name="builder">The tool.</param>
-    /// <param name="policyNames">The policies the caller has to satisfy.</param>
-    /// <returns>The same builder for chaining.</returns>
+    /// <param name="policyNames">The policy names.</param>
+    /// <returns>The same builder.</returns>
     /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
     public static IAgentToolConventionBuilder RequireAuthorization(this IAgentToolConventionBuilder builder, params string[] policyNames)
     {
@@ -47,17 +39,14 @@ public static class AgentToolConventionBuilderExtensions
     /// Requires what the given attributes describe.
     /// </summary>
     /// <param name="builder">The tool.</param>
-    /// <param name="authorizeData">The attributes, of the kind that would sit on an endpoint.</param>
-    /// <returns>The same builder for chaining.</returns>
+    /// <param name="authorizeData">The authorization attributes.</param>
+    /// <returns>The same builder.</returns>
     /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
     public static IAgentToolConventionBuilder RequireAuthorization(this IAgentToolConventionBuilder builder, params IAuthorizeData[] authorizeData)
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(authorizeData);
 
-        // added one at a time on purpose. handing the array to a params object[] lands it as a
-        // single item, which nothing looking for an IAuthorizeData would ever find - and the
-        // symptom is a tool that says it carries no authorization while plainly carrying some
         foreach (var data in authorizeData)
         {
             builder.Metadata.Add(data);
@@ -70,8 +59,8 @@ public static class AgentToolConventionBuilderExtensions
     /// Requires the given requirements.
     /// </summary>
     /// <param name="builder">The tool.</param>
-    /// <param name="requirements">The requirements the caller has to satisfy.</param>
-    /// <returns>The same builder for chaining.</returns>
+    /// <param name="requirements">The requirements.</param>
+    /// <returns>The same builder.</returns>
     /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
     public static IAgentToolConventionBuilder RequireAuthorization(this IAgentToolConventionBuilder builder, params IAuthorizationRequirement[] requirements)
     {
@@ -84,11 +73,11 @@ public static class AgentToolConventionBuilderExtensions
     }
 
     /// <summary>
-    /// Requires a policy built elsewhere.
+    /// Requires the given policy.
     /// </summary>
     /// <param name="builder">The tool.</param>
-    /// <param name="policy">The policy the caller has to satisfy.</param>
-    /// <returns>The same builder for chaining.</returns>
+    /// <param name="policy">The policy.</param>
+    /// <returns>The same builder.</returns>
     /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
     public static IAgentToolConventionBuilder RequireAuthorization(this IAgentToolConventionBuilder builder, AuthorizationPolicy policy)
     {
@@ -98,11 +87,11 @@ public static class AgentToolConventionBuilderExtensions
     }
 
     /// <summary>
-    /// Requires a policy configured here.
+    /// Requires a policy configured inline.
     /// </summary>
     /// <param name="builder">The tool.</param>
     /// <param name="configurePolicy">Builds the policy.</param>
-    /// <returns>The same builder for chaining.</returns>
+    /// <returns>The same builder.</returns>
     /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
     public static IAgentToolConventionBuilder RequireAuthorization(this IAgentToolConventionBuilder builder, Action<AuthorizationPolicyBuilder> configurePolicy)
     {
@@ -116,15 +105,12 @@ public static class AgentToolConventionBuilderExtensions
     }
 
     /// <summary>
-    /// Says something about a tool that nothing in this library interprets.
+    /// Attaches arbitrary metadata for a host's own filters to read.
     /// </summary>
     /// <param name="builder">The tool.</param>
-    /// <param name="metadata">What to say.</param>
-    /// <returns>The same builder for chaining.</returns>
+    /// <param name="metadata">The metadata.</param>
+    /// <returns>The same builder.</returns>
     /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
-    /// <remarks>
-    /// The escape hatch. A host with a filter of its own puts what that filter reads here.
-    /// </remarks>
     public static IAgentToolConventionBuilder WithMetadata(this IAgentToolConventionBuilder builder, params object[] metadata)
     {
         ArgumentNullException.ThrowIfNull(builder);
@@ -142,10 +128,6 @@ public static class AgentToolConventionBuilderExtensions
     /// Carries requirements given directly rather than through an attribute.
     /// </summary>
     /// <param name="requirements">The requirements.</param>
-    /// <remarks>
-    /// <see cref="IAuthorizationRequirementData"/> is how ASP.NET Core lets an attribute carry its
-    /// own requirements, and reusing it here means the reading side needs no second case.
-    /// </remarks>
     private sealed class RequirementsMetadata(IReadOnlyList<IAuthorizationRequirement> requirements) : IAuthorizationRequirementData
     {
         /// <inheritdoc />

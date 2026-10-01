@@ -4,27 +4,23 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 namespace ApricotFramework.Agentic.Tools.Extensions;
 
 /// <summary>
-/// The decisions where sequence is part of the meaning.
+/// Order-sensitive configuration of the tool pipeline.
 /// </summary>
 /// <remarks>
-/// Everything here either replaces what came before it or nests inside it. A chain is what makes
-/// that legible: you cannot write these out of order, so there is no rule to remember about
-/// which registration wins. Additive wiring - a tool, a source, a validator, a filter - is an
-/// <c>Add</c> on the service collection instead.
+/// Each call replaces or wraps what came before. Order-free registrations are <c>Add</c> methods on
+/// the service collection.
 /// </remarks>
 public static class AgentToolsBuilderExtensions
 {
     /// <summary>
-    /// Says how this host decides who is asking.
+    /// Sets the context factory that decides who is asking.
     /// </summary>
-    /// <typeparam name="TFactory">The factory to use.</typeparam>
+    /// <typeparam name="TFactory">The factory type.</typeparam>
     /// <param name="builder">The builder.</param>
-    /// <returns>The same builder, for chaining.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/> is null.</exception>
+    /// <returns>The same builder.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="builder"/> is null.</exception>
     /// <remarks>
-    /// Replaces whatever came before it. Two answers to "who is asking" is not a configuration,
-    /// it is a bug - so the last one in the chain is the one that applies, and a host kind's
-    /// default is simply the one the entry point put there first.
+    /// Replaces any earlier factory; the last call wins. Registered scoped, so it may depend on scoped services.
     /// </remarks>
     public static IAgentToolsBuilder WithContext<TFactory>(this IAgentToolsBuilder builder)
         where TFactory : class, IAgentToolContextFactory
@@ -32,23 +28,21 @@ public static class AgentToolsBuilderExtensions
         ArgumentNullException.ThrowIfNull(builder);
 
         builder.Services.RemoveAll<IAgentToolContextFactory>();
-        builder.Services.AddSingleton<IAgentToolContextFactory, TFactory>();
+        builder.Services.AddScoped<IAgentToolContextFactory, TFactory>();
 
         return builder;
     }
 
     /// <summary>
-    /// Wraps the invoker in something of the host's own.
+    /// Wraps the invoker in a decorator.
     /// </summary>
-    /// <typeparam name="TInvoker">The wrapper. Its constructor takes the invoker it wraps, and whatever else it needs.</typeparam>
+    /// <typeparam name="TInvoker">The decorator; its constructor takes the wrapped invoker.</typeparam>
     /// <param name="builder">The builder.</param>
-    /// <returns>The same builder, for chaining.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/> is null.</exception>
-    /// <exception cref="InvalidOperationException">Thrown when no invoker has been registered to wrap.</exception>
+    /// <returns>The same builder.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="builder"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">No invoker is registered to wrap.</exception>
     /// <remarks>
-    /// For what needs to know the caller: an audit record, a per-person budget. Each call wraps
-    /// the last, so the one written last is the one a caller reaches first - which is the reason
-    /// this is a chain rather than a loose registration.
+    /// For concerns needing the caller (auditing, per-person budgets). The last decorator added runs first.
     /// </remarks>
     public static IAgentToolsBuilder DecorateInvoker<TInvoker>(this IAgentToolsBuilder builder)
         where TInvoker : class, IAgentToolInvoker
@@ -61,17 +55,14 @@ public static class AgentToolsBuilderExtensions
     }
 
     /// <summary>
-    /// Wraps the executor in something of the host's own.
+    /// Wraps the executor in a decorator.
     /// </summary>
-    /// <typeparam name="TExecutor">The wrapper. Its constructor takes the executor it wraps, and whatever else it needs.</typeparam>
+    /// <typeparam name="TExecutor">The decorator; its constructor takes the wrapped executor.</typeparam>
     /// <param name="builder">The builder.</param>
-    /// <returns>The same builder, for chaining.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/> is null.</exception>
-    /// <exception cref="InvalidOperationException">Thrown when no executor has been registered to wrap.</exception>
-    /// <remarks>
-    /// For what is about the surface rather than the caller: a rate limit, a span, a cap on how
-    /// many tools a listing offers.
-    /// </remarks>
+    /// <returns>The same builder.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="builder"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">No executor is registered to wrap.</exception>
+    /// <remarks>For surface-level concerns (rate limits, tracing, listing caps).</remarks>
     public static IAgentToolsBuilder DecorateExecutor<TExecutor>(this IAgentToolsBuilder builder)
         where TExecutor : class, IAgentToolExecutor
     {
@@ -83,10 +74,10 @@ public static class AgentToolsBuilderExtensions
     }
 
     /// <summary>
-    /// Puts something of the host's own around a service registered behind an interface.
+    /// Replaces the last registration of a service with a decorator around it.
     /// </summary>
-    /// <typeparam name="TService">The interface.</typeparam>
-    /// <typeparam name="TWrapper">The wrapper.</typeparam>
+    /// <typeparam name="TService">The service type.</typeparam>
+    /// <typeparam name="TWrapper">The decorator type.</typeparam>
     /// <param name="services">The service collection.</param>
     private static void Decorate<TService, TWrapper>(IServiceCollection services)
         where TService : class
@@ -105,15 +96,12 @@ public static class AgentToolsBuilderExtensions
     }
 
     /// <summary>
-    /// Builds whatever a captured descriptor describes.
+    /// Creates the instance a captured descriptor describes.
     /// </summary>
-    /// <param name="provider">Where the descriptor's own dependencies come from.</param>
-    /// <param name="descriptor">The descriptor to build.</param>
+    /// <param name="provider">Supplies the descriptor's dependencies.</param>
+    /// <param name="descriptor">The descriptor.</param>
     /// <returns>The instance.</returns>
-    /// <remarks>
-    /// A descriptor can say what it provides in three ways, and a wrapper has to cope with all of
-    /// them, or it works until somebody registers theirs differently.
-    /// </remarks>
+    /// <remarks>Handles instance, factory and type descriptors alike.</remarks>
     private static object Resolve(IServiceProvider provider, ServiceDescriptor descriptor)
     {
         if (descriptor.ImplementationInstance is not null)
