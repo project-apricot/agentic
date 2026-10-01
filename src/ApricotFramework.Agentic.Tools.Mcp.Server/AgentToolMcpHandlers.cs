@@ -3,6 +3,8 @@ using Microsoft.Extensions.AI;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace ApricotFramework.Agentic.Tools.Mcp.Server;
 
@@ -24,9 +26,106 @@ public sealed class AgentToolMcpHandlers(IAgentToolExecutor executor)
     /// <returns>The tools offered to this caller.</returns>
     public async ValueTask<ListToolsResult> ListAsync(RequestContext<ListToolsRequestParams> request, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(request);
+
         var offered = await this.OfferedAsync(cancellationToken).ConfigureAwait(false);
 
-        return new ListToolsResult { Tools = [.. offered.Select(tool => tool.ProtocolTool)] };
+        var natural = SupportsNaturalOutputSchemas(request.Server.NegotiatedProtocolVersion);
+
+        return new ListToolsResult { Tools = [.. offered.Select(tool => natural ? tool.ProtocolTool : ForLegacyWire(tool.ProtocolTool))] };
+    }
+
+    /// <summary>
+    /// The first protocol revision allowing a non-object output schema (SEP-2106).
+    /// </summary>
+    private const string NaturalOutputSchemasVersion = "2026-07-28";
+
+    /// <summary>
+    /// Checks whether a protocol version accepts output schemas in their natural shape.
+    /// </summary>
+    /// <param name="protocolVersion">The negotiated version, or null before negotiation.</param>
+    /// <returns>True from <c>2026-07-28</c> on.</returns>
+    /// <remarks>
+    /// Mirrors the SDK's own check, which it applies in its built-in <c>tools/list</c> handler and
+    /// when wrapping structured content; a custom handler has to apply it to the listing itself.
+    /// </remarks>
+    private static bool SupportsNaturalOutputSchemas(string? protocolVersion) =>
+        protocolVersion is not null && string.CompareOrdinal(protocolVersion, NaturalOutputSchemasVersion) >= 0;
+
+    /// <summary>
+    /// Gives a tool the output schema an older client expects.
+    /// </summary>
+    /// <param name="tool">The tool in its natural shape.</param>
+    /// <returns>The tool with a non-object schema wrapped under <c>result</c>, or itself.</returns>
+    /// <remarks>
+    /// The SDK's own transform, which is internal: a non-object schema is wrapped, exactly
+    /// <c>["object","null"]</c> is narrowed to <c>object</c>. The SDK wraps the structured content
+    /// to match on the same condition, so the two agree.
+    /// </remarks>
+    private static Tool ForLegacyWire(Tool tool)
+    {
+        if (tool.OutputSchema is not { } schema || IsObject(schema))
+        {
+            return tool;
+        }
+
+        var node = JsonNode.Parse(schema.GetRawText());
+
+        JsonNode legacy = IsNullableObject(node)
+            ? Narrowed(node!.AsObject())
+            : new JsonObject
+            {
+                ["type"] = "object",
+                ["properties"] = new JsonObject { ["result"] = node },
+                ["required"] = new JsonArray("result")
+            };
+
+        return new Tool
+        {
+            Name = tool.Name,
+            Title = tool.Title,
+            Description = tool.Description,
+            InputSchema = tool.InputSchema,
+            OutputSchema = JsonSerializer.SerializeToElement(legacy),
+            Annotations = tool.Annotations,
+            Icons = tool.Icons,
+            Meta = tool.Meta
+        };
+    }
+
+    /// <summary>
+    /// Checks for a schema whose type is plainly <c>object</c>.
+    /// </summary>
+    /// <param name="schema">The schema.</param>
+    /// <returns>True where it needs no change.</returns>
+    private static bool IsObject(JsonElement schema) =>
+        schema.ValueKind == JsonValueKind.Object
+        && schema.TryGetProperty("type", out var type)
+        && type.ValueKind == JsonValueKind.String
+        && type.ValueEquals("object");
+
+    /// <summary>
+    /// Checks for a schema typed exactly <c>["object","null"]</c>.
+    /// </summary>
+    /// <param name="node">The schema.</param>
+    /// <returns>True where only the type needs narrowing.</returns>
+    private static bool IsNullableObject(JsonNode? node) =>
+        node is JsonObject schema
+        && schema.TryGetPropertyValue("type", out var type)
+        && type is JsonArray { Count: 2 } types
+        && types.Any(entry => (string?)entry == "object")
+        && types.Any(entry => (string?)entry == "null");
+
+    /// <summary>
+    /// Narrows a nullable object schema to <c>object</c>.
+    /// </summary>
+    /// <param name="schema">The schema.</param>
+    /// <returns>The same schema, narrowed.</returns>
+    private static JsonObject Narrowed(JsonObject schema)
+    {
+        schema["type"] = "object";
+
+        return schema;
     }
 
     /// <summary>

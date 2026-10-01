@@ -58,6 +58,35 @@ public sealed class AgentToolMcpHandlersTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task EveryPublishedOutputSchema_HasAnObjectRoot_AsTheProtocolRequires()
+    {
+        await using var host = Host();
+
+        var request = new RequestContext<ListToolsRequestParams>(this.server, new JsonRpcRequest { Method = RequestMethods.ToolsList }, new ListToolsRequestParams());
+
+        var listed = await new AgentToolMcpHandlers(host.GetRequiredService<IAgentToolExecutor>()).ListAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.All(
+            listed.Tools.Where(tool => tool.OutputSchema is not null),
+            tool => Assert.Equal("object", tool.OutputSchema!.Value.GetProperty("type").GetString()));
+
+        // a list is published the way the SDK returns it: wrapped under "result"
+        var list = listed.Tools.Single(tool => tool.Name == "invoices_list").OutputSchema!.Value;
+
+        Assert.Equal("array", list.GetProperty("properties").GetProperty("result").GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public async Task AListResult_IsReturnedUnderResult_MatchingThePublishedSchema()
+    {
+        await using var host = Host();
+
+        var result = await this.Call(host, "invoices_list");
+
+        Assert.Equal([1L, 2L], result.StructuredContent!.Value.GetProperty("result").Deserialize<long[]>()!);
+    }
+
+    [Fact]
     public async Task ACall_PutsOnlyThatToolToAuthorization_NotEveryToolOnTheSurface()
     {
         await using var host = Host();

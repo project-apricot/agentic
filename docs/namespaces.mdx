@@ -64,6 +64,7 @@ half out of the hosting half was not a move anyone's `using` block noticed.
 | `…Tools.Grpc` | `…Grpc.Contract`, generated — the messages and the two stubs |
 | `…Tools.Grpc.Server` | `AgentToolGrpcService`; `.Extensions` for `MapAgentTools` |
 | `…Tools.Grpc.Client` | `GrpcAgentToolSource`, `RemoteAgentTool`, and the options; `.Extensions` for registration |
+| `…Tools.ErrorDefinitions` | `ErrorDefinitionExceptionTranslator`; `.Extensions` for registration |
 
 Each transport's namespace matches its package exactly, so which package a type came from is
 never a question — which matters most for the two MCP packages, where a host may have only one of

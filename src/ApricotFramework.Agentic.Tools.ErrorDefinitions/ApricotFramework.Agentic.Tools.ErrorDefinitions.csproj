@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>ApricotFramework.Agentic.Tools.ErrorDefinitions</RootNamespace>
+    <Description>Describes ApricotFramework.ErrorDefinitions errors thrown by agent tools as ApricotFramework.Agentic failures, so every surface reports a not-found, a validation failure or an outage the same way.</Description>
+    <PackageTags>ai;agent;agentic;tools;errors;error-definitions</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ApricotFramework.ErrorDefinitions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../ApricotFramework.Agentic.Tools/ApricotFramework.Agentic.Tools.csproj" />
+  </ItemGroup>
+
+</Project>

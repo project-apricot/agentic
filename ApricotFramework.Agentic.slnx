@@ -8,6 +8,7 @@
     <Project Path="src/ApricotFramework.Agentic.Tools.Grpc/ApricotFramework.Agentic.Tools.Grpc.csproj" />
     <Project Path="src/ApricotFramework.Agentic.Tools.Grpc.Server/ApricotFramework.Agentic.Tools.Grpc.Server.csproj" />
     <Project Path="src/ApricotFramework.Agentic.Tools.Grpc.Client/ApricotFramework.Agentic.Tools.Grpc.Client.csproj" />
+    <Project Path="src/ApricotFramework.Agentic.Tools.ErrorDefinitions/ApricotFramework.Agentic.Tools.ErrorDefinitions.csproj" />
   </Folder>
   <Folder Name="/examples/">
     <Project Path="examples/ApricotFramework.Agentic.Examples.SupportDesk/ApricotFramework.Agentic.Examples.SupportDesk.csproj" />
@@ -20,5 +21,6 @@
     <Project Path="tests/ApricotFramework.Agentic.Tools.AspNetCore.Tests/ApricotFramework.Agentic.Tools.AspNetCore.Tests.csproj" />
     <Project Path="tests/ApricotFramework.Agentic.Tools.Grpc.Tests/ApricotFramework.Agentic.Tools.Grpc.Tests.csproj" />
     <Project Path="tests/ApricotFramework.Agentic.Tools.Mcp.Server.Tests/ApricotFramework.Agentic.Tools.Mcp.Server.Tests.csproj" />
+    <Project Path="tests/ApricotFramework.Agentic.Tools.ErrorDefinitions.Tests/ApricotFramework.Agentic.Tools.ErrorDefinitions.Tests.csproj" />
   </Folder>
 </Solution>
