@@ -20,6 +20,8 @@ public sealed class Gate
     /// </summary>
     private readonly ConcurrentDictionary<string, bool> refused = new(StringComparer.Ordinal);
 
+    private readonly ConcurrentDictionary<string, bool> unauthenticated = new(StringComparer.Ordinal);
+
     /// <summary>
     /// Gets whether a tool is hidden.
     /// </summary>
@@ -34,6 +36,8 @@ public sealed class Gate
     /// <returns>Whether it is.</returns>
     public bool Refuses(string name) => this.refused.ContainsKey(name);
 
+    public bool WantsACaller(string name) => this.unauthenticated.ContainsKey(name);
+
     /// <summary>
     /// Hides a tool.
     /// </summary>
@@ -46,6 +50,8 @@ public sealed class Gate
     /// <param name="name">The tool.</param>
     public void Refuse(string name) => this.refused[name] = true;
 
+    public void RequireACaller(string name) => this.unauthenticated[name] = true;
+
     /// <summary>
     /// Opens everything again.
     /// </summary>
@@ -53,5 +59,6 @@ public sealed class Gate
     {
         this.hidden.Clear();
         this.refused.Clear();
+        this.unauthenticated.Clear();
     }
 }

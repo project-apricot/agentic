@@ -4,20 +4,19 @@ using Microsoft.Extensions.DependencyInjection;
 namespace ApricotFramework.Agentic.Tools.Registration;
 
 /// <summary>
-/// Describing a tool that is a class.
+/// Describes tools implemented as classes.
 /// </summary>
 internal static class AgentToolTypes
 {
     /// <summary>
-    /// Reads what a tool type declares, and returns it as something resolved per call.
+    /// Describes a tool type as a tool resolved per call.
     /// </summary>
     /// <param name="services">A scope to read the declaration in.</param>
     /// <param name="toolType">The tool's type.</param>
-    /// <param name="metadata">What a host said about it.</param>
+    /// <param name="metadata">Host-supplied metadata.</param>
     /// <returns>The descriptor.</returns>
     /// <remarks>
-    /// One instance is built here and read, never run. What it says - a name, a title, prose,
-    /// labels, two schemas - is the same for every caller, so reading it once is not a shortcut.
+    /// One instance is built here only to read its declaration, which must be the same for every caller.
     /// </remarks>
     internal static AgentToolDescriptor Describe(IServiceProvider services, Type toolType, IReadOnlyList<object> metadata)
     {

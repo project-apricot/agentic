@@ -1,33 +1,31 @@
 using ApricotFramework.Agentic.Tools.Registration;
 using Microsoft.Extensions.Options;
+using System.Collections.Frozen;
 
 namespace ApricotFramework.Agentic.Tools.Sources;
 
 /// <summary>
 /// The tools a host registered in code.
 /// </summary>
-/// <remarks>
-/// Described once, the first time anything asks, and then held. What a registration describes -
-/// a name, prose, two schemas - does not vary by caller, so there is nothing to recompute; what
-/// does vary is the instance that runs, and that is resolved per call from the caller's scope.
-/// </remarks>
+/// <remarks>Described once on first use and cached; tool instances are still resolved per call from the caller's scope.</remarks>
 public sealed class RegistrationAgentToolSource : IAgentToolSource
 {
     /// <summary>
-    /// How to describe each registered tool.
+    /// Factories describing each registered tool.
     /// </summary>
     private readonly IReadOnlyList<Func<IServiceProvider, AgentToolDescriptor>> registrations;
 
     /// <summary>
-    /// The descriptors, once they have been built.
+    /// The descriptors and index, once built.
     /// </summary>
-    private IReadOnlyList<AgentToolDescriptor>? described;
+    /// <remarks>One object so readers never see a mismatched list and index.</remarks>
+    private Described? described;
 
     /// <summary>
-    /// Creates a new instance of the source.
+    /// Creates the source.
     /// </summary>
-    /// <param name="options">The tools a host registered in code.</param>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="options"/> is null.</exception>
+    /// <param name="options">The code registrations.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
     public RegistrationAgentToolSource(IOptions<AgentToolRegistrationOptions> options)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -40,23 +38,38 @@ public sealed class RegistrationAgentToolSource : IAgentToolSource
     {
         ArgumentNullException.ThrowIfNull(context);
 
-        return ValueTask.FromResult(Volatile.Read(ref this.described) ?? this.Describe(context.Services));
+        return ValueTask.FromResult((Volatile.Read(ref this.described) ?? this.Describe(context.Services)).Tools);
+    }
+
+    /// <inheritdoc />
+    public ValueTask<AgentToolDescriptor?> FindAsync(string name, IAgentToolSourceContext context, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        var held = Volatile.Read(ref this.described) ?? this.Describe(context.Services);
+
+        return ValueTask.FromResult(AgentToolIndex.Find(held.Index, name));
     }
 
     /// <summary>
     /// Describes every registration, once.
     /// </summary>
-    /// <param name="services">The scope to build the declarations in.</param>
-    /// <returns>The descriptors.</returns>
-    /// <remarks>
-    /// Unlocked. Two callers arriving at once both describe, one of them wins the exchange, and
-    /// the loser's instances are discarded - which costs a little repeated work exactly once in
-    /// the life of the process and avoids holding a lock across whatever a constructor does.
-    /// </remarks>
-    private IReadOnlyList<AgentToolDescriptor> Describe(IServiceProvider services)
+    /// <param name="services">The scope to build declarations in.</param>
+    /// <returns>The descriptors and index.</returns>
+    /// <remarks>Lock-free: concurrent first callers may both describe; one result wins and the other is discarded.</remarks>
+    private Described Describe(IServiceProvider services)
     {
-        IReadOnlyList<AgentToolDescriptor> fresh = [.. this.registrations.Select(registration => registration(services))];
+        IReadOnlyList<AgentToolDescriptor> tools = [.. this.registrations.Select(registration => registration(services))];
+
+        var fresh = new Described(tools, AgentToolIndex.By(tools));
 
         return Interlocked.CompareExchange(ref this.described, fresh, null) ?? fresh;
     }
+
+    /// <summary>
+    /// The described tools.
+    /// </summary>
+    /// <param name="Tools">The descriptors, in registration order.</param>
+    /// <param name="Index">The descriptors by name.</param>
+    private sealed record Described(IReadOnlyList<AgentToolDescriptor> Tools, FrozenDictionary<string, AgentToolDescriptor> Index);
 }

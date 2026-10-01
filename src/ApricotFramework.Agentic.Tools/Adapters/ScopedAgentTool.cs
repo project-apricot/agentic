@@ -5,29 +5,25 @@ using System.Text.Json;
 namespace ApricotFramework.Agentic.Tools.Adapters;
 
 /// <summary>
-/// A tool declared once and built again for every call, from the caller's own scope.
+/// A class-per-tool whose declaration is read once and whose instance is resolved per call.
 /// </summary>
 /// <remarks>
-/// <para>
-/// What a class-per-tool registration becomes. The declaration - a name, a title, prose, and two
-/// schemas - is read once from an instance built at composition, because none of them varies by
-/// caller. The instance that actually runs is resolved from the scope the call opened, which is
-/// what lets a tool take a scoped dependency through its constructor the way an endpoint does.
-/// </para>
+/// The declaration is read from a snapshot instance at composition; the running instance comes from
+/// the call's scope, so tools can take scoped constructor dependencies.
 /// </remarks>
 public sealed class ScopedAgentTool : AgentTool
 {
     /// <summary>
-    /// What the tool says about itself.
+    /// The tool's declaration.
     /// </summary>
     private readonly AgentToolDeclaration declaration;
 
     /// <summary>
-    /// Creates a new instance of the tool.
+    /// Creates the adapter.
     /// </summary>
     /// <param name="toolType">The type to resolve for each call.</param>
-    /// <param name="snapshot">An instance, read for what it declares and then discarded.</param>
-    /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
+    /// <param name="snapshot">An instance read for its declaration, then discarded.</param>
+    /// <exception cref="ArgumentNullException">An argument is null.</exception>
     public ScopedAgentTool(Type toolType, AgentTool snapshot)
     {
         ArgumentNullException.ThrowIfNull(toolType);
@@ -41,14 +37,11 @@ public sealed class ScopedAgentTool : AgentTool
     }
 
     /// <summary>
-    /// Gets the type built for each call.
+    /// Gets the tool type resolved for each call.
     /// </summary>
     /// <remarks>
-    /// A tool written as a class is no longer reachable by its own type from a listing, because
-    /// no instance of it exists until somebody calls it. This is what is left of that, for a
-    /// diagnostic or a host that keyed something on it - though narrowing on what a tool
-    /// declares, or on what the host said about it, is the better habit and works for a tool
-    /// that never had a class.
+    /// Mainly for diagnostics; prefer matching on the declaration or metadata, which also works for
+    /// tools without a class.
     /// </remarks>
     public Type ToolType { get; }
 
@@ -101,11 +94,11 @@ public sealed class ScopedAgentTool : AgentTool
     }
 
     /// <summary>
-    /// Builds the tool for one call.
+    /// Resolves the tool for one call.
     /// </summary>
     /// <param name="arguments">The arguments carrying the scope.</param>
     /// <returns>The tool.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when the call carries no scope.</exception>
+    /// <exception cref="InvalidOperationException">The call carries no services.</exception>
     private AgentTool Resolve(AIFunctionArguments arguments)
     {
         ArgumentNullException.ThrowIfNull(arguments);

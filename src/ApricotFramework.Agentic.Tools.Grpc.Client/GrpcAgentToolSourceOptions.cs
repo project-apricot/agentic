@@ -1,44 +1,63 @@
 namespace ApricotFramework.Agentic.Tools.Grpc.Client;
 
 /// <summary>
-/// How another service's tools are offered here.
+/// Options for offering another service's tools here.
 /// </summary>
 public sealed class GrpcAgentToolSourceOptions
 {
     /// <summary>
-    /// Gets or sets what is put in front of every remote tool's name, or null for nothing.
+    /// Gets or sets the prefix for every remote tool's name, or null for none.
     /// </summary>
-    /// <remarks>
-    /// Null is the usual answer here, unlike for a foreign MCP server. Services in one fleet
-    /// already name their tools by domain, and prefixing again would say it twice.
-    /// </remarks>
     public string? Prefix { get; set; }
 
     /// <summary>
-    /// Gets or sets how long a listing is held before the service is asked again.
+    /// Gets or sets how long a listing is cached; zero, the default, disables caching.
     /// </summary>
     /// <remarks>
-    /// Zero by default, meaning no caching, and that is deliberate. The serving host filters its
-    /// listing by who is asking, so one caller's answer is not another's - a host whose remote
-    /// surface is the same for everybody can safely set this, and one that is not should leave
-    /// it alone.
+    /// The serving host filters its listing by caller, so only cache when the remote surface is safe to share per <see cref="CacheKey"/>.
     /// </remarks>
     public TimeSpan Lifetime { get; set; }
 
     /// <summary>
-    /// Gets what is said about every tool read off the service.
+    /// Gets or sets the cache key for a listing, or null to key it by the caller's subject.
     /// </summary>
     /// <remarks>
-    /// Nothing that arrives over the wire carries an authorization attribute. Where this host
-    /// gates a remote tool on top of whatever the serving host does, this is where it says so.
+    /// Only read when <see cref="Lifetime"/> is positive. The default keys by the <c>sub</c> or
+    /// name-identifier claim, or identity name; calls with no caller share one entry. Returning null
+    /// leaves the call uncached.
+    /// </remarks>
+    public Func<IAgentToolSourceContext, string?>? CacheKey { get; set; }
+
+    /// <summary>
+    /// Gets or sets the deadline for invoking a tool, or null to use the client's registration.
+    /// </summary>
+    /// <remarks>
+    /// Applies to invocation only, not listing.
+    /// </remarks>
+    public TimeSpan? CallDeadline { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether this service's tools must load for the listing to succeed.
+    /// </summary>
+    /// <remarks>
+    /// False by default: an unreachable service, a tool refused by validation, or a name collision
+    /// drops that service's tools with a log entry. True fails the listing instead.
+    /// </remarks>
+    public bool RequireService { get; set; }
+
+    /// <summary>
+    /// Gets metadata attached to every tool read off the service.
+    /// </summary>
+    /// <remarks>
+    /// Remote tools carry no authorization attributes; add local gating here.
     /// </remarks>
     public IList<object> Metadata { get; } = [];
 
     /// <summary>
-    /// Gets or sets a last look at each tool before it is offered, or null for none.
+    /// Gets or sets a final transform for each tool before it is offered, or null for none.
     /// </summary>
     /// <remarks>
-    /// Returning null leaves a tool out, which is how an allowlist is written.
+    /// Returning null leaves a tool out.
     /// </remarks>
     public Func<AgentToolDescriptor, AgentToolDescriptor?>? Curate { get; set; }
 }

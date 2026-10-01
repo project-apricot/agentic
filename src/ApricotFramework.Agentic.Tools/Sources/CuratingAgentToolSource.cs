@@ -1,24 +1,20 @@
 namespace ApricotFramework.Agentic.Tools.Sources;
 
 /// <summary>
-/// A source whose tools are looked over before they are offered.
+/// A source whose tools are curated before being offered.
 /// </summary>
-/// <remarks>
-/// For tools from somewhere a host does not control. The registry refuses a declaration it
-/// cannot accept, which is right for tools you wrote - you should not ship one you got wrong -
-/// and wrong for tools you merely reached, where one bad declaration would cost you all of them.
-/// </remarks>
-/// <param name="inner">The source whose tools are looked over.</param>
-/// <param name="curate">Decides what to do with each tool.</param>
+/// <remarks>For external tools, so one bad declaration costs that tool rather than all of them.</remarks>
+/// <param name="inner">The curated source.</param>
+/// <param name="curate">Returns the tool to offer, or null to drop it.</param>
 public sealed class CuratingAgentToolSource(IAgentToolSource inner, Func<AgentToolDescriptor, AgentToolDescriptor?> curate) : IAgentToolSource
 {
     /// <summary>
-    /// The source whose tools are looked over.
+    /// The curated source.
     /// </summary>
     private readonly IAgentToolSource inner = inner ?? throw new ArgumentNullException(nameof(inner));
 
     /// <summary>
-    /// Decides what to do with each tool.
+    /// Returns the tool to offer, or null to drop it.
     /// </summary>
     private readonly Func<AgentToolDescriptor, AgentToolDescriptor?> curate = curate ?? throw new ArgumentNullException(nameof(curate));
 
@@ -39,4 +35,17 @@ public sealed class CuratingAgentToolSource(IAgentToolSource inner, Func<AgentTo
 
         return curated;
     }
+
+    /// <inheritdoc />
+    /// <remarks>Searches the curated listing, since curation may rename tools.</remarks>
+    public async ValueTask<AgentToolDescriptor?> FindAsync(string name, IAgentToolSourceContext context, CancellationToken cancellationToken = default)
+    {
+        var tools = await this.GetToolsAsync(context, cancellationToken).ConfigureAwait(false);
+
+        return tools.FirstOrDefault(tool => string.Equals(tool.Name, name, StringComparison.Ordinal));
+    }
+
+    /// <inheritdoc />
+    /// <remarks>Same as the inner source.</remarks>
+    public bool IsExternal => this.inner.IsExternal;
 }

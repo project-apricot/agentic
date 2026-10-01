@@ -1,10 +1,10 @@
 namespace ApricotFramework.Agentic.Tools.Exceptions;
 
 /// <summary>
-/// The arguments a caller supplied could not be read.
+/// The supplied arguments could not be read.
 /// </summary>
 /// <remarks>
-/// A model filling in a schema will occasionally get the shape wrong. Worth reporting so it reads as an argument to correct rather than a fault to retry unchanged.
+/// Reported as arguments to correct rather than a fault to retry unchanged.
 /// </remarks>
 public class AgentToolArgumentException : AgentToolException
 {

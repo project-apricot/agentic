@@ -4,29 +4,28 @@ using System.Reflection;
 namespace ApricotFramework.Agentic.Tools;
 
 /// <summary>
-/// Reads the labels a tool declares and reads them back out again.
+/// Reads tool labels.
 /// </summary>
 public static class AgentToolLabels
 {
     /// <summary>
-    /// An absence of labels.
+    /// An empty label set.
     /// </summary>
     public static readonly IReadOnlyDictionary<string, object?> None = new Dictionary<string, object?>(StringComparer.Ordinal);
 
     /// <summary>
-    /// What has already been read for a tool type?
+    /// Labels already read per tool type.
     /// </summary>
     private static readonly ConcurrentDictionary<Type, IReadOnlyDictionary<string, object?>> Cache = new();
 
     /// <summary>
     /// Gets the labels declared by <see cref="AgentToolLabelAttribute"/> on a type.
     /// </summary>
-    /// <param name="type">The tool type to read.</param>
-    /// <returns>The labels, empty where the type declares none.</returns>
+    /// <param name="type">The tool type.</param>
+    /// <returns>The labels, empty where none are declared.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="type"/> is null.</exception>
     /// <remarks>
-    /// Read from the whole type chain, base first, so a derived tool restating a name overrides
-    /// the family rather than colliding with it.
+    /// Read base first, so a derived type restating a name overrides it.
     /// </remarks>
     public static IReadOnlyDictionary<string, object?> ForType(Type type)
     {
@@ -36,15 +35,13 @@ public static class AgentToolLabels
     }
 
     /// <summary>
-    /// Gets the labels declared on a method and on the class it belongs to.
+    /// Gets the labels declared on a method and its declaring class.
     /// </summary>
-    /// <param name="method">The method behind the tool.</param>
-    /// <returns>The labels, empty where neither declares any.</returns>
+    /// <param name="method">The tool method.</param>
+    /// <returns>The labels, empty where none are declared.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="method"/> is null.</exception>
     /// <remarks>
-    /// The class first, so a method restating a name overrides the family it belongs to rather
-    /// than colliding with it - the same rule a derived tool gets from
-    /// <see cref="ForType"/>.
+    /// Class first, so a method restating a name overrides it.
     /// </remarks>
     public static IReadOnlyDictionary<string, object?> ForMethod(MethodInfo method)
     {
@@ -70,13 +67,13 @@ public static class AgentToolLabels
     }
 
     /// <summary>
-    /// Gets a label's value, where the tool carries one of those names and that type.
+    /// Gets a label's value if present and of the expected type.
     /// </summary>
-    /// <typeparam name="TValue">The type the value is expected to be.</typeparam>
-    /// <param name="tool">The tool to read.</param>
-    /// <param name="name">The label to read.</param>
-    /// <param name="value">The value, where there was one.</param>
-    /// <returns>True where the tool carries the label and its value is a <typeparamref name="TValue"/>.</returns>
+    /// <typeparam name="TValue">The expected value type.</typeparam>
+    /// <param name="tool">The tool.</param>
+    /// <param name="name">The label name.</param>
+    /// <param name="value">The value, if found.</param>
+    /// <returns>True where the label exists and its value is a <typeparamref name="TValue"/>.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="tool"/> is null.</exception>
     public static bool TryGetLabel<TValue>(this IAgentToolDeclaration tool, string name, out TValue? value)
     {
@@ -97,9 +94,9 @@ public static class AgentToolLabels
     /// <summary>
     /// Checks whether a tool carries a label.
     /// </summary>
-    /// <param name="tool">The tool to read.</param>
-    /// <param name="name">The label to look for.</param>
-    /// <returns>True, where the tool carries it, whatever its value.</returns>
+    /// <param name="tool">The tool.</param>
+    /// <param name="name">The label name.</param>
+    /// <returns>True where the label exists, whatever its value.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="tool"/> is null.</exception>
     public static bool HasLabel(this IAgentToolDeclaration tool, string name)
     {
@@ -111,7 +108,7 @@ public static class AgentToolLabels
     /// <summary>
     /// Reads the labels off a type chain.
     /// </summary>
-    /// <param name="type">The type to read.</param>
+    /// <param name="type">The type.</param>
     /// <returns>The labels.</returns>
     private static IReadOnlyDictionary<string, object?> Read(Type type)
     {

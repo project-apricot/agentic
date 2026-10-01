@@ -1,7 +1,7 @@
 namespace ApricotFramework.Agentic.Tools.Exceptions;
 
 /// <summary>
-/// The base of the failures this library reports.
+/// Base class for failures reported by this library.
 /// </summary>
 public abstract class AgentToolException : Exception
 {

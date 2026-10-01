@@ -7,54 +7,46 @@ using System.Collections.Concurrent;
 namespace ApricotFramework.Agentic.Tools.Mcp.Client;
 
 /// <summary>
-/// The tools whatever MCP servers this caller reaches are offering, now.
+/// Offers the tools of the MCP servers this caller reaches.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Asked on every listing rather than once at start-up, which is the whole reason a source takes
-/// a caller: what a server offers changes while the process runs, and which servers a person has
-/// connected is a property of the person.
-/// </para>
-/// <para>
-/// Nothing wraps a foreign tool. An <c>McpClientTool</c> is already an
-/// <c>AIFunction</c>, so it goes into the descriptor as it arrived and what this host claims
-/// about it - a name in a space of its own, a description it pinned, a gate - sits beside it.
-/// </para>
+/// Queried per listing, since servers' tools change at runtime and the servers reached depend on
+/// the caller. Foreign <c>McpClientTool</c> instances are used unwrapped.
 /// </remarks>
 public sealed class McpAgentToolSource : IAgentToolSource, IMcpToolInvalidation
 {
     /// <summary>
-    /// Which servers a caller reaches.
+    /// The client provider.
     /// </summary>
     private readonly IMcpClientProvider clients;
 
     /// <summary>
-    /// How foreign tools are offered here.
+    /// The source options.
     /// </summary>
     private readonly IOptionsMonitor<McpAgentToolSourceOptions> options;
 
     /// <summary>
-    /// What this host would refuse.
+    /// The tool validators.
     /// </summary>
     private readonly IReadOnlyList<IAgentToolValidator> validators;
 
     /// <summary>
-    /// Where a dropped tool is reported.
+    /// The logger.
     /// </summary>
     private readonly ILogger<McpAgentToolSource> logger;
 
     /// <summary>
-    /// What each server last said it offers.
+    /// Cached listings, per server.
     /// </summary>
     private readonly ConcurrentDictionary<McpClient, Listing> listings = new();
 
     /// <summary>
     /// Creates a new instance of the source.
     /// </summary>
-    /// <param name="clients">Which servers a caller reaches.</param>
-    /// <param name="options">How foreign tools are offered here.</param>
-    /// <param name="validators">What this host would refuse.</param>
-    /// <param name="logger">Where a dropped tool is reported.</param>
+    /// <param name="clients">The client provider.</param>
+    /// <param name="options">The source options.</param>
+    /// <param name="validators">The tool validators.</param>
+    /// <param name="logger">The logger.</param>
     /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
     public McpAgentToolSource(
         IMcpClientProvider clients,
@@ -71,6 +63,17 @@ public sealed class McpAgentToolSource : IAgentToolSource, IMcpToolInvalidation
         this.options = options;
         this.validators = [.. validators];
         this.logger = logger;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Reads the cached listings; does not skip by prefix, since curation can rename tools.
+    /// </remarks>
+    public async ValueTask<AgentToolDescriptor?> FindAsync(string name, IAgentToolSourceContext context, CancellationToken cancellationToken = default)
+    {
+        var tools = await this.GetToolsAsync(context, cancellationToken).ConfigureAwait(false);
+
+        return tools.FirstOrDefault(tool => string.Equals(tool.Name, name, StringComparison.Ordinal));
     }
 
     /// <inheritdoc />
@@ -106,12 +109,12 @@ public sealed class McpAgentToolSource : IAgentToolSource, IMcpToolInvalidation
     }
 
     /// <summary>
-    /// Reads one server's tools, from the last answer where it is still fresh.
+    /// Reads a server's tools, using the cache while fresh.
     /// </summary>
     /// <param name="client">The server.</param>
-    /// <param name="settings">How foreign tools are offered here.</param>
+    /// <param name="settings">The source options.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A task containing the tools.</returns>
+    /// <returns>The tools.</returns>
     private async ValueTask<IReadOnlyList<AgentToolDescriptor>> ReadAsync(McpClient client, McpAgentToolSourceOptions settings, CancellationToken cancellationToken)
     {
         if (this.listings.TryGetValue(client, out var held) && !held.IsStale(settings.Lifetime))
@@ -137,11 +140,11 @@ public sealed class McpAgentToolSource : IAgentToolSource, IMcpToolInvalidation
     }
 
     /// <summary>
-    /// Decides how one foreign tool is offered here, or that it is not.
+    /// Converts a foreign tool to a descriptor.
     /// </summary>
-    /// <param name="tool">The tool the server offered.</param>
+    /// <param name="tool">The foreign tool.</param>
     /// <param name="client">The server.</param>
-    /// <param name="settings">How foreign tools are offered here.</param>
+    /// <param name="settings">The source options.</param>
     /// <returns>The descriptor, or null to leave it out.</returns>
     private AgentToolDescriptor? Offer(McpClientTool tool, McpClient client, McpAgentToolSourceOptions settings)
     {
@@ -188,11 +191,11 @@ public sealed class McpAgentToolSource : IAgentToolSource, IMcpToolInvalidation
     }
 
     /// <summary>
-    /// Leaves out a tool this host would refuse, and says so.
+    /// Drops and logs a tool the validators refuse.
     /// </summary>
     /// <param name="descriptor">The tool.</param>
-    /// <param name="origin">Which server it came from.</param>
-    /// <returns>The tool, or null where it was left out.</returns>
+    /// <param name="origin">The originating server.</param>
+    /// <returns>The tool, or null if dropped.</returns>
     private AgentToolDescriptor? Accepted(AgentToolDescriptor descriptor, string origin)
     {
         foreach (var validator in this.validators)
@@ -213,37 +216,35 @@ public sealed class McpAgentToolSource : IAgentToolSource, IMcpToolInvalidation
     }
 
     /// <summary>
-    /// The label every foreign tool carries, saying which server it came from.
+    /// The label naming a foreign tool's originating server.
     /// </summary>
     public const string OriginLabel = "mcp.origin";
 
     /// <summary>
-    /// Names a server, for a label and for a name space.
+    /// Gets a server's name.
     /// </summary>
     /// <param name="client">The server.</param>
-    /// <returns>Its name.</returns>
+    /// <returns>The name.</returns>
     private static string Origin(McpClient client) =>
-        client.ServerInfo?.Name is { Length: > 0 } name ? name : "mcp";
+        client.ServerInfo.Name is { Length: > 0 } name ? name : "mcp";
 
     /// <summary>
-    /// Decides what a foreign tool is called here.
+    /// Builds a foreign tool's local name.
     /// </summary>
-    /// <param name="name">What the server calls it.</param>
-    /// <param name="origin">Which server it came from.</param>
-    /// <param name="prefix">What goes in front, or null for nothing.</param>
+    /// <param name="name">The server's name for the tool.</param>
+    /// <param name="origin">The originating server.</param>
+    /// <param name="prefix">The prefix, or null.</param>
     /// <returns>The name.</returns>
     private static string Name(string name, string origin, string? prefix) =>
         prefix is null ? name : $"{prefix}{Slug(origin)}_{name}";
 
     /// <summary>
-    /// Renders a server's name so it can be part of a tool's.
+    /// Converts a server name to a tool-name segment.
     /// </summary>
     /// <param name="origin">The server's name.</param>
-    /// <returns>Something a tool name can contain.</returns>
+    /// <returns>The segment.</returns>
     /// <remarks>
-    /// Only the last segment. A server that calls itself <c>mcp-servers/everything</c> is saying
-    /// where it came from as much as what it is, and carrying all of that into every tool name
-    /// spends a prompt's attention on packaging.
+    /// Uses only the last path segment.
     /// </remarks>
     private static string Slug(string origin)
     {
@@ -255,17 +256,17 @@ public sealed class McpAgentToolSource : IAgentToolSource, IMcpToolInvalidation
     }
 
     /// <summary>
-    /// What one server last said it offers.
+    /// A server's cached listing.
     /// </summary>
     /// <param name="Tools">The tools.</param>
-    /// <param name="Read">When it said so.</param>
+    /// <param name="Read">When it was fetched.</param>
     private sealed record Listing(IReadOnlyList<AgentToolDescriptor> Tools, DateTimeOffset Read)
     {
         /// <summary>
-        /// Whether this is too old to use.
+        /// Checks whether the listing has expired.
         /// </summary>
-        /// <param name="lifetime">How long one is held.</param>
-        /// <returns>True where the server should be asked again.</returns>
+        /// <param name="lifetime">The cache lifetime.</param>
+        /// <returns>True if it should be refetched.</returns>
         internal bool IsStale(TimeSpan lifetime) => DateTimeOffset.UtcNow - this.Read > lifetime;
     }
 }

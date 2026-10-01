@@ -1,7 +1,7 @@
 namespace ApricotFramework.Agentic.Tools.Exceptions;
 
 /// <summary>
-/// The tool exists and is offered to this caller, but the caller is not permitted to use it.
+/// The tool is offered to the caller, but the caller may not use it.
 /// </summary>
 public class AgentToolAccessDeniedException : AgentToolException
 {

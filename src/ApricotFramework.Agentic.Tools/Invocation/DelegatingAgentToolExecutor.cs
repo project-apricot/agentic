@@ -3,18 +3,14 @@ using Microsoft.Extensions.AI;
 namespace ApricotFramework.Agentic.Tools.Invocation;
 
 /// <summary>
-/// An executor that passes everything through, so a wrapper says only what it changes.
+/// Base executor that passes every call through, so a wrapper overrides only what it changes.
 /// </summary>
-/// <remarks>
-/// Where things about the surface go: a rate limit, a span, a cap on how many tools a listing
-/// offers. Things that need the caller wrap <see cref="IAgentToolInvoker"/> instead, which is
-/// inside the scope and has the context in hand.
-/// </remarks>
-/// <param name="inner">The executor calls are passed to.</param>
+/// <remarks>For surface concerns (rate limits, spans, listing caps). Caller-aware concerns should wrap <see cref="IAgentToolInvoker"/> instead.</remarks>
+/// <param name="inner">The wrapped executor.</param>
 public abstract class DelegatingAgentToolExecutor(IAgentToolExecutor inner) : IAgentToolExecutor
 {
     /// <summary>
-    /// Gets the executor calls are passed to.
+    /// Gets the wrapped executor.
     /// </summary>
     protected IAgentToolExecutor Inner { get; } = inner ?? throw new ArgumentNullException(nameof(inner));
 
@@ -25,6 +21,11 @@ public abstract class DelegatingAgentToolExecutor(IAgentToolExecutor inner) : IA
     /// <inheritdoc />
     public virtual ValueTask<IReadOnlyList<AIFunction>> GetAvailableFunctionsAsync(CancellationToken cancellationToken = default) =>
         this.Inner.GetAvailableFunctionsAsync(cancellationToken);
+
+    /// <inheritdoc />
+    /// <remarks>A wrapper that narrows the listing must narrow this too, or a lookup will find what the listing hid.</remarks>
+    public virtual ValueTask<AIFunction?> GetAvailableFunctionAsync(string name, CancellationToken cancellationToken = default) =>
+        this.Inner.GetAvailableFunctionAsync(name, cancellationToken);
 
     /// <inheritdoc />
     public virtual IAsyncEnumerable<string> InvokeAsync(string name, string? argumentsJson, CancellationToken cancellationToken = default) =>

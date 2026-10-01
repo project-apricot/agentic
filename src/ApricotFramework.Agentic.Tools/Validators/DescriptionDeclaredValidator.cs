@@ -3,11 +3,9 @@ using ApricotFramework.Agentic.Tools.Exceptions;
 namespace ApricotFramework.Agentic.Tools.Validators;
 
 /// <summary>
-/// Insists every tool declares a description.
+/// Requires every tool to declare a description.
 /// </summary>
-/// <remarks>
-/// The one most worth choosing. A description is what a model selects on, so a tool without one cannot be chosen correctly - it is not documentation that can be added later. Still not registered by default, because whether a host wants its own build to fail over it is the host's call.
-/// </remarks>
+/// <remarks>Models select tools by description. Not registered by default.</remarks>
 public sealed class DescriptionDeclaredValidator : IAgentToolValidator
 {
     /// <inheritdoc />

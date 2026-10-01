@@ -173,15 +173,23 @@ than inventing one.
 
 ### Errors
 
-`AgentToolException` becomes `McpException`, preserving refusal versus fault — a refusal that
-reads as a fault invites a model to retry it, and an agent will accept the invitation.
+A tool that is not offered is a protocol error (`McpException`). Anything that happens once there
+is a tool — a refusal, bad arguments, a failure of the operation — comes back as a `CallToolResult`
+with `isError` set, as the protocol asks, so the model sees it and can act on it. Each message ends
+with what to do next, because a refusal that reads as a fault invites a model to retry it, and an
+agent will accept the invitation.
 
 | Thrown | Reported as |
 | --- | --- |
-| `AgentToolNotFoundException` | "Do not retry; list the tools again." |
-| `AgentToolAccessDeniedException` | "Do not retry." |
-| `AgentToolArgumentException` | "Correct the arguments and try again." |
-| anything else | the message, unqualified |
+| `AgentToolNotFoundException` | protocol error: "Do not retry; list the tools again." |
+| `AgentToolUnauthenticatedException` | error result: the user needs to sign in again; do not retry |
+| `AgentToolAccessDeniedException` | error result: do not retry; ask the user to request the access |
+| `AgentToolArgumentException` | error result: correct the arguments and try again |
+| `AgentToolFailedException` | error result, by kind: check the identifiers, correct the request, wait, or retry in a moment |
+| any other `AgentToolException` | error result: do not retry unchanged |
+
+A call looks up only the tool it names — `IAgentToolExecutor.GetAvailableFunctionAsync` — rather
+than composing and authorizing every tool on the surface to find it.
 
 ## Both at once
 

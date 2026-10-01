@@ -1,18 +1,16 @@
 namespace ApricotFramework.Agentic.Tools.Mcp.Client;
 
 /// <summary>
-/// The MCP servers this host connects to, for every caller alike.
+/// The MCP servers this host connects to, shared by every caller.
 /// </summary>
 /// <remarks>
-/// What a desktop application, a console tool or a single-tenant service has: a list written
-/// down once, connected once, shared by whoever asks. A host whose servers differ per person
-/// writes an <see cref="IMcpClientProvider"/> instead - this one would hand everybody the same
-/// connections, which for a credentialed server is a data leak rather than an inconvenience.
+/// Hosts whose servers differ per caller should implement <see cref="IMcpClientProvider"/>;
+/// sharing credentialed connections leaks data.
 /// </remarks>
 public sealed class McpAgentToolClientOptions
 {
     /// <summary>
-    /// The configuration section this is bound from unless a host says otherwise.
+    /// The default configuration section name.
     /// </summary>
     public const string SectionName = "AgentToolMcpServers";
 
@@ -22,17 +20,15 @@ public sealed class McpAgentToolClientOptions
     public IList<McpAgentToolServer> Servers { get; } = [];
 
     /// <summary>
-    /// Gets or sets how long to wait for a server that will not answer.
+    /// Gets or sets the connection timeout.
     /// </summary>
     public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
-    /// Gets or sets whether a server that cannot be reached stops the host.
+    /// Gets or sets whether an unreachable server stops the host.
     /// </summary>
     /// <remarks>
-    /// Off by default, and the same call <c>DropRejected</c> makes for the same reason: a
-    /// service that will not run because a third party is down is worse than one running with
-    /// fewer tools. What it cost is logged.
+    /// Off by default; unreachable servers are logged.
     /// </remarks>
     public bool RequireEveryServer { get; set; }
 }

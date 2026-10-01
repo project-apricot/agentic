@@ -11,29 +11,20 @@ using Microsoft.Extensions.Hosting;
 namespace ApricotFramework.Agentic.Tools.Extensions;
 
 /// <summary>
-/// Registering tools, and the things that compose and run them.
+/// Registers tools and the services that compose and run them.
 /// </summary>
-/// <remarks>
-/// Nothing here is an option or a flag. Registering something is what makes it apply, and a host
-/// that wants none of a thing says so by not asking rather than by unpicking a registration.
-/// </remarks>
+/// <remarks>No flags: registering something is what makes it apply.</remarks>
 public static class AgentToolServiceCollectionExtensions
 {
     /// <summary>
-    /// Adds the registry, the invoker and the executor, and nothing opinionated.
+    /// Adds the registry, invoker and executor, and nothing opinionated.
     /// </summary>
     /// <param name="services">The service collection.</param>
-    /// <returns>A builder carrying the decisions where sequence is part of the meaning.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="services"/> is null.</exception>
+    /// <returns>A builder for order-sensitive configuration.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is null.</exception>
     /// <remarks>
-    /// <para>
-    /// The one thing registered without being asked for is the tripwire: a tool declaring a gate
-    /// that nothing enforces refuses to compose.
-    /// </para>
-    /// <para>
-    /// Everything is registered with <c>TryAdd</c>, so a host that has already registered one of
-    /// its own keeps it.
-    /// </para>
+    /// Uses <c>TryAdd</c>, so existing host registrations win. Also registers the tripwire that refuses
+    /// to compose a tool declaring a gate nothing enforces.
     /// </remarks>
     public static IAgentToolsBuilder AddAgentToolsCore(this IServiceCollection services)
     {
@@ -54,16 +45,14 @@ public static class AgentToolServiceCollectionExtensions
     /// <summary>
     /// Adds one tool written as a class.
     /// </summary>
-    /// <typeparam name="TTool">The tool to add.</typeparam>
+    /// <typeparam name="TTool">The tool type.</typeparam>
     /// <param name="services">The service collection.</param>
-    /// <param name="configure">What else to say about it, or null for nothing.</param>
-    /// <returns>The same collection, for chaining.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="services"/> is null.</exception>
+    /// <param name="configure">Extra metadata, or null.</param>
+    /// <returns>The same collection.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is null.</exception>
     /// <remarks>
-    /// The type is registered as scoped and resolved again for every call, so it takes its
-    /// dependencies through its constructor the way an endpoint does. The attributes on it and on
-    /// everything it derives from become its metadata, which is how an authorization attribute on
-    /// the class becomes a gate without anyone wiring it up.
+    /// Registered as scoped and resolved per call. Attributes on the type and its bases become its
+    /// metadata, so e.g. an authorization attribute becomes a gate automatically.
     /// </remarks>
     public static IServiceCollection AddAgentTool<TTool>(this IServiceCollection services, Action<IAgentToolConventionBuilder>? configure = null)
         where TTool : AgentTool
@@ -74,14 +63,14 @@ public static class AgentToolServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Adds one tool written as a class, by its type.
+    /// Adds one tool written as a class, by type.
     /// </summary>
     /// <param name="services">The service collection.</param>
-    /// <param name="toolType">The tool to add.</param>
-    /// <param name="configure">What else to say about it, or null for nothing.</param>
-    /// <returns>The same collection, for chaining.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
-    /// <exception cref="ArgumentException">Thrown when <paramref name="toolType"/> is not a tool that can be instantiated as one.</exception>
+    /// <param name="toolType">The tool type.</param>
+    /// <param name="configure">Extra metadata, or null.</param>
+    /// <returns>The same collection.</returns>
+    /// <exception cref="ArgumentNullException">An argument is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="toolType"/> is not a concrete tool.</exception>
     public static IServiceCollection AddAgentTool(this IServiceCollection services, Type toolType, Action<IAgentToolConventionBuilder>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -102,15 +91,13 @@ public static class AgentToolServiceCollectionExtensions
     /// <summary>
     /// Adds every tool method on a class.
     /// </summary>
-    /// <typeparam name="TToolType">The class holding the methods.</typeparam>
+    /// <typeparam name="TToolType">The class declaring the methods.</typeparam>
     /// <param name="services">The service collection.</param>
-    /// <param name="configure">What else to say about each of them, or null for nothing.</param>
-    /// <returns>The same collection, for chaining.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="services"/> is null.</exception>
+    /// <param name="configure">Extra metadata for each tool, or null.</param>
+    /// <returns>The same collection.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is null.</exception>
     /// <remarks>
-    /// The other way to write a tool. The class is resolved per call exactly as a class-per-tool
-    /// is, so a method takes what it needs through the class's constructor - or through its own
-    /// parameters, which the function factory binds from the same scope.
+    /// The class is resolved per call; method parameters can also be bound from the call's scope.
     /// </remarks>
     public static IServiceCollection AddAgentToolType<TToolType>(this IServiceCollection services, Action<IAgentToolConventionBuilder>? configure = null)
         where TToolType : class
@@ -121,14 +108,14 @@ public static class AgentToolServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Adds every tool method on a class, by its type.
+    /// Adds every tool method on a class, by type.
     /// </summary>
     /// <param name="services">The service collection.</param>
-    /// <param name="toolType">The class holding the methods.</param>
-    /// <param name="configure">What else to say about each of them, or null for nothing.</param>
-    /// <returns>The same collection, for chaining.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
-    /// <exception cref="ArgumentException">Thrown when the type declares no tool methods.</exception>
+    /// <param name="toolType">The class declaring the methods.</param>
+    /// <param name="configure">Extra metadata for each tool, or null.</param>
+    /// <returns>The same collection.</returns>
+    /// <exception cref="ArgumentNullException">An argument is null.</exception>
+    /// <exception cref="ArgumentException">The type declares no tool methods.</exception>
     public static IServiceCollection AddAgentToolType(this IServiceCollection services, Type toolType, Action<IAgentToolConventionBuilder>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -158,22 +145,14 @@ public static class AgentToolServiceCollectionExtensions
     /// </summary>
     /// <param name="services">The service collection.</param>
     /// <param name="function">The function.</param>
-    /// <param name="declaration">What the function cannot say for itself.</param>
-    /// <param name="configure">What else to say about it, or null for nothing.</param>
-    /// <returns>The same collection, for chaining.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
+    /// <param name="declaration">What the function cannot declare itself.</param>
+    /// <param name="configure">Extra metadata, or null.</param>
+    /// <returns>The same collection.</returns>
+    /// <exception cref="ArgumentNullException">An argument is null.</exception>
     /// <remarks>
-    /// <para>
-    /// For a delegate, something built from configuration, or a tool read off a server this host
-    /// merely speaks to. Nothing wraps it: the function is registered as it is, so a consumer
-    /// reaching through it - for the <c>McpClientTool</c> behind it, say - still finds what is
-    /// there.
-    /// </para>
-    /// <para>
-    /// A function has no class to carry an attribute, so this is the registration that most often
-    /// wants something said in the callback - and without it, an authorization filter refuses the
-    /// tool rather than opening it.
-    /// </para>
+    /// The function is registered unwrapped, so consumers can still reach what is behind it (e.g. an
+    /// <c>McpClientTool</c>). It has no attributes, so declare any gate in <paramref name="configure"/>;
+    /// otherwise an authorization filter refuses the tool.
     /// </remarks>
     public static IServiceCollection AddAgentTool(
         this IServiceCollection services,
@@ -191,12 +170,12 @@ public static class AgentToolServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Adds somewhere else tools come from.
+    /// Adds a tool source.
     /// </summary>
-    /// <typeparam name="TSource">The source to add.</typeparam>
+    /// <typeparam name="TSource">The source type.</typeparam>
     /// <param name="services">The service collection.</param>
-    /// <returns>The same collection, for chaining.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="services"/> is null.</exception>
+    /// <returns>The same collection.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is null.</exception>
     public static IServiceCollection AddAgentToolSource<TSource>(this IServiceCollection services)
         where TSource : class, IAgentToolSource
     {
@@ -208,16 +187,13 @@ public static class AgentToolServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Adds somewhere else tools come from, built by hand.
+    /// Adds a tool source built by a factory.
     /// </summary>
     /// <param name="services">The service collection.</param>
     /// <param name="source">Builds the source.</param>
-    /// <returns>The same collection, for chaining.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
-    /// <remarks>
-    /// The overload a curated source needs, since wrapping one source in another cannot be
-    /// expressed by naming a type.
-    /// </remarks>
+    /// <returns>The same collection.</returns>
+    /// <exception cref="ArgumentNullException">An argument is null.</exception>
+    /// <remarks>Needed for sources that wrap another, such as a curated source.</remarks>
     public static IServiceCollection AddAgentToolSource(this IServiceCollection services, Func<IServiceProvider, IAgentToolSource> source)
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -229,12 +205,12 @@ public static class AgentToolServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Adds a check applied to every declaration as the registry composes.
+    /// Adds a validator applied to every declaration as the registry composes.
     /// </summary>
-    /// <typeparam name="TValidator">The check to add.</typeparam>
+    /// <typeparam name="TValidator">The validator type.</typeparam>
     /// <param name="services">The service collection.</param>
-    /// <returns>The same collection, for chaining.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="services"/> is null.</exception>
+    /// <returns>The same collection.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is null.</exception>
     public static IServiceCollection AddAgentToolValidator<TValidator>(this IServiceCollection services)
         where TValidator : class, IAgentToolValidator
     {
@@ -246,25 +222,19 @@ public static class AgentToolServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Adds something that decides whether a caller can see a tool.
+    /// Adds a filter deciding whether a caller can see a tool.
     /// </summary>
-    /// <typeparam name="TFilter">The filter to add.</typeparam>
+    /// <typeparam name="TFilter">The filter type.</typeparam>
     /// <param name="services">The service collection.</param>
-    /// <param name="lifetime">How long one lives, defaulting to the life of the process.</param>
-    /// <returns>The same collection, for chaining.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="services"/> is null.</exception>
+    /// <param name="lifetime">The service lifetime; scoped by default.</param>
+    /// <returns>The same collection.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is null.</exception>
     /// <remarks>
-    /// <para>
-    /// Scope, not permission: a tool a filter refuses is left out of the listing and, if named
-    /// anyway, refused as not-found. For a permission check use
-    /// <see cref="AddAgentToolAuthorizationFilter{TFilter}"/>, which runs after every filter.
-    /// </para>
-    /// <para>
-    /// Scoped is available because the invoker is resolved from the call's own scope, so a filter
-    /// reading per-call state gets a fresh one each call.
-    /// </para>
+    /// For scope, not permission (use <see cref="AddAgentToolAuthorizationFilter{TFilter}"/>). Scoped by
+    /// default because filters usually depend on scoped services; use a longer lifetime only if it depends
+    /// on nothing scoped, or it will capture the first caller's services.
     /// </remarks>
-    public static IServiceCollection AddAgentToolFilter<TFilter>(this IServiceCollection services, ServiceLifetime lifetime = ServiceLifetime.Singleton)
+    public static IServiceCollection AddAgentToolFilter<TFilter>(this IServiceCollection services, ServiceLifetime lifetime = ServiceLifetime.Scoped)
         where TFilter : class, IAgentToolFilter
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -275,25 +245,18 @@ public static class AgentToolServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Adds something that decides whether a caller may use a tool they can see.
+    /// Adds an authorization filter deciding whether a caller may use a visible tool.
     /// </summary>
-    /// <typeparam name="TFilter">The authorization filter to add.</typeparam>
+    /// <typeparam name="TFilter">The authorization filter type.</typeparam>
     /// <param name="services">The service collection.</param>
-    /// <param name="lifetime">How long one lives, defaulting to the life of the process.</param>
-    /// <returns>The same collection, for chaining.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="services"/> is null.</exception>
+    /// <param name="lifetime">The service lifetime; scoped by default.</param>
+    /// <returns>The same collection.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is null.</exception>
     /// <remarks>
-    /// <para>
-    /// For a host enforcing permission its own way - a table, a service this library has never
-    /// heard of. The attribute-based one is <c>WithAuthorization()</c> in the ASP.NET Core package.
-    /// Runs after every filter, and a refusal is reported as access denied with its reason.
-    /// </para>
-    /// <para>
-    /// Registering one also satisfies the tripwire, because registering an authorization filter is
-    /// the statement that something enforces the gates a tool declares.
-    /// </para>
+    /// For custom permission checks; the attribute-based one is <c>WithAuthorization()</c> in the ASP.NET
+    /// Core package. Registering one satisfies the enforcement tripwire.
     /// </remarks>
-    public static IServiceCollection AddAgentToolAuthorizationFilter<TFilter>(this IServiceCollection services, ServiceLifetime lifetime = ServiceLifetime.Singleton)
+    public static IServiceCollection AddAgentToolAuthorizationFilter<TFilter>(this IServiceCollection services, ServiceLifetime lifetime = ServiceLifetime.Scoped)
         where TFilter : class, IAgentToolAuthorizationFilter
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -305,11 +268,30 @@ public static class AgentToolServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Records how to describe one tool, once there is a container.
+    /// Adds an exception translator.
+    /// </summary>
+    /// <typeparam name="TTranslator">The translator type.</typeparam>
+    /// <param name="services">The service collection.</param>
+    /// <param name="lifetime">The service lifetime; scoped by default.</param>
+    /// <returns>The same collection.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is null.</exception>
+    /// <remarks>Translators are asked in registration order; the first match wins.</remarks>
+    public static IServiceCollection AddAgentToolExceptionTranslator<TTranslator>(this IServiceCollection services, ServiceLifetime lifetime = ServiceLifetime.Scoped)
+        where TTranslator : class, IAgentToolExceptionTranslator
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.Add(ServiceDescriptor.Describe(typeof(IAgentToolExceptionTranslator), typeof(TTranslator), lifetime));
+
+        return services;
+    }
+
+    /// <summary>
+    /// Records a deferred descriptor factory for one tool.
     /// </summary>
     /// <param name="services">The service collection.</param>
-    /// <param name="describe">How to describe it.</param>
-    /// <returns>The same collection, for chaining.</returns>
+    /// <param name="describe">Builds the descriptor.</param>
+    /// <returns>The same collection.</returns>
     private static IServiceCollection AddAgentToolDescriptor(this IServiceCollection services, Func<IServiceProvider, AgentToolDescriptor> describe)
     {
         services.Configure<AgentToolRegistrationOptions>(options => options.Registrations.Add(describe));

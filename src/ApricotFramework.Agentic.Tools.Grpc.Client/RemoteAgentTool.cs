@@ -8,57 +8,46 @@ using System.Text.Json;
 namespace ApricotFramework.Agentic.Tools.Grpc.Client;
 
 /// <summary>
-/// A tool another service owns, callable from here.
+/// A tool owned by another service, invoked over gRPC.
 /// </summary>
 /// <remarks>
-/// <para>
-/// The declaration came off the wire and the call goes back over it. Nothing about the tool is
-/// local, which is the point: local or remote is a property of the caller, not of the operation,
-/// so this sits in a registry beside a tool written in this process and nothing downstream can
-/// tell the difference.
-/// </para>
-/// <para>
-/// The call is point to point. Whoever federates several services registers a client per service
-/// and reaches each directly, rather than routing through something that would need credentials
-/// for all of them.
-/// </para>
-/// <para>
-/// It holds a way to get a client, not a client. A tool can sit in a cached listing for as long as
-/// the host likes, and a client held that long would carry the scope it was made in to every
-/// later caller. Each call gets its own, from the services of the call's scope.
-/// </para>
+/// Holds no client: each call gets one from the call's scope, so a cached listing does not carry
+/// a stale scope to later callers.
 /// </remarks>
 public sealed class RemoteAgentTool : AgentTool
 {
     /// <summary>
-    /// What the serving host said about the tool.
+    /// The serving host's declaration.
     /// </summary>
     private readonly AgentToolDeclaration declaration;
 
     /// <summary>
-    /// Gets a client that reaches the serving host, from the services of the call.
+    /// Gets a client from the call's services.
     /// </summary>
     private readonly Func<IServiceProvider, AgentTools.AgentToolsClient> client;
 
     /// <summary>
-    /// What the serving host calls the tool, which is not always what this host offers it as.
+    /// The tool's name on the serving host.
     /// </summary>
     private readonly string remoteName;
 
     /// <summary>
+    /// The call deadline, or null to use the client's registration.
+    /// </summary>
+    private readonly TimeSpan? deadline;
+
+    /// <summary>
     /// Creates a new instance of the tool.
     /// </summary>
-    /// <param name="declaration">What the serving host said about the tool.</param>
-    /// <param name="inputSchema">The schema of the arguments.</param>
-    /// <param name="outputSchema">The schema of the result, or null where none was published.</param>
-    /// <param name="client">Gets a client that reaches the serving host, from the services of the call.</param>
-    /// <param name="remoteName">What the serving host calls it.</param>
-    /// <remarks>
-    /// Internal, for the same reason as the source's: a tool built by hand could be given a way
-    /// to get a client that holds one.
-    /// </remarks>
-    internal RemoteAgentTool(AgentToolDeclaration declaration, JsonElement inputSchema, JsonElement? outputSchema, Func<IServiceProvider, AgentTools.AgentToolsClient> client, string remoteName)
+    /// <param name="declaration">The serving host's declaration.</param>
+    /// <param name="inputSchema">The arguments' schema.</param>
+    /// <param name="outputSchema">The result schema, or null.</param>
+    /// <param name="client">Gets a client from the call's services.</param>
+    /// <param name="remoteName">The tool's name on the serving host.</param>
+    /// <param name="deadline">The call deadline, or null to use the client's registration.</param>
+    internal RemoteAgentTool(AgentToolDeclaration declaration, JsonElement inputSchema, JsonElement? outputSchema, Func<IServiceProvider, AgentTools.AgentToolsClient> client, string remoteName, TimeSpan? deadline = null)
     {
+        this.deadline = deadline;
         this.declaration = declaration;
         this.JsonSchema = inputSchema;
         this.ReturnJsonSchema = outputSchema;
@@ -86,8 +75,7 @@ public sealed class RemoteAgentTool : AgentTool
 
     /// <inheritdoc />
     /// <remarks>
-    /// True whatever the serving host said. A tool reached over a wire is outside this
-    /// application by construction.
+    /// Always true, whatever the serving host declared.
     /// </remarks>
     public override bool IsOpenWorld => true;
 
@@ -110,7 +98,7 @@ public sealed class RemoteAgentTool : AgentTool
 
         try
         {
-            var response = await this.Client(arguments).InvokeToolAsync(request, cancellationToken: cancellationToken).ConfigureAwait(false);
+            var response = await this.Client(arguments).InvokeToolAsync(request, deadline: this.Deadline(), cancellationToken: cancellationToken).ConfigureAwait(false);
 
             return Read(response.ResultJson);
         }
@@ -127,7 +115,7 @@ public sealed class RemoteAgentTool : AgentTool
     {
         var request = this.Request(arguments);
 
-        using var call = this.Client(arguments).InvokeToolStream(request, cancellationToken: cancellationToken);
+        using var call = this.Client(arguments).InvokeToolStream(request, deadline: this.Deadline(), cancellationToken: cancellationToken);
 
         while (true)
         {
@@ -152,15 +140,11 @@ public sealed class RemoteAgentTool : AgentTool
     }
 
     /// <summary>
-    /// Makes a client for one call.
+    /// Creates a client for one call.
     /// </summary>
-    /// <param name="arguments">The arguments, carrying the services of the call's scope.</param>
+    /// <param name="arguments">The arguments, carrying the call's services.</param>
     /// <returns>The client.</returns>
     /// <exception cref="AgentToolNotInvocableException">Thrown when the arguments carry no services.</exception>
-    /// <remarks>
-    /// The executor always supplies them. A caller invoking the function by hand has to as well,
-    /// because the client is registered in the container and there is nowhere else to get one.
-    /// </remarks>
     private AgentTools.AgentToolsClient Client(AIFunctionArguments arguments)
     {
         var services = arguments.Services ?? throw new AgentToolNotInvocableException($"The tool '{this.Name}' is reached over gRPC and needs the services of the call to make a client. Invoke it through the executor, or set AIFunctionArguments.Services.");
@@ -169,13 +153,12 @@ public sealed class RemoteAgentTool : AgentTool
     }
 
     /// <summary>
-    /// Builds the call.
+    /// Builds the request.
     /// </summary>
-    /// <param name="arguments">The arguments as the caller built them.</param>
+    /// <param name="arguments">The arguments.</param>
     /// <returns>The request.</returns>
     /// <remarks>
-    /// A caller that already had JSON gets its own text sent, untouched, which is what keeps a
-    /// large identifier intact across a hop it did not ask for.
+    /// JSON supplied by the caller is sent verbatim, keeping large numbers intact.
     /// </remarks>
     private InvokeToolRequest Request(AIFunctionArguments arguments)
     {
@@ -191,9 +174,9 @@ public sealed class RemoteAgentTool : AgentTool
     }
 
     /// <summary>
-    /// Reads a result back as a value.
+    /// Parses a result.
     /// </summary>
-    /// <param name="json">The result as the serving host wrote it.</param>
+    /// <param name="json">The result JSON.</param>
     /// <returns>The result.</returns>
     private static JsonElement Read(string json)
     {
@@ -204,43 +187,83 @@ public sealed class RemoteAgentTool : AgentTool
     }
 
     /// <summary>
-    /// Turns a remote failure back into one of this library's, where it is one this library has.
+    /// Computes the call deadline.
     /// </summary>
-    /// <param name="exception">What the call failed with.</param>
-    /// <param name="name">The tool this host offers.</param>
-    /// <returns>The failure to throw instead, or null to let the original through untouched.</returns>
+    /// <returns>The deadline, or null to use the client's registration.</returns>
+    private DateTime? Deadline() => this.deadline is { } allowed ? DateTime.UtcNow + allowed : null;
+
+    /// <summary>
+    /// Translates a failed call using the serving host's trailers.
+    /// </summary>
+    /// <param name="exception">The failure.</param>
+    /// <param name="name">The tool's local name.</param>
+    /// <returns>The translated exception, or null to pass the original through.</returns>
     /// <remarks>
-    /// <para>
-    /// The status codes the serving side chose, read back the same way round, so a refusal stays a
-    /// refusal across the hop rather than arriving as a fault a model will retry.
-    /// </para>
-    /// <para>
-    /// The status is looked for down the whole chain, not only at the top. A host may translate
-    /// transport failures on its clients - into its own error type, container-wide, without this
-    /// client's registration ever mentioning it - and a translation that keeps the original as its
-    /// inner exception, as it should, still reads the same here. The translated exception becomes
-    /// the inner one, so nothing the host added is lost.
-    /// </para>
+    /// Read from <see cref="AgentToolTrailers"/>, not the status code: a refusal is rethrown as the
+    /// refusal raised; a failure as an <see cref="AgentToolFailedException"/>. An untrailed status - an
+    /// endpoint's own authentication, a proxy - is read by its code where the code alone is
+    /// unambiguous; an untrailed <c>NOT_FOUND</c> (tool or record?) and anything else pass through
+    /// unchanged. The status is found anywhere in the inner-exception chain.
     /// </remarks>
     private static Exception? Describe(Exception exception, string name)
     {
-        var rpc = Rpc(exception);
-
-        return rpc?.StatusCode switch
+        if (Rpc(exception) is not { } rpc)
         {
-            StatusCode.NotFound => new AgentToolNotFoundException($"No tool is offered as '{name}'.", exception),
-            StatusCode.PermissionDenied or StatusCode.Unauthenticated => new AgentToolAccessDeniedException(rpc.Status.Detail, exception),
-            StatusCode.InvalidArgument => new AgentToolArgumentException(rpc.Status.Detail, exception),
-            StatusCode.Unimplemented => new AgentToolNotInvocableException(rpc.Status.Detail, exception),
-            _ => null
+            return null;
+        }
+
+        var detail = rpc.Status.Detail;
+
+        return rpc.Trailers.GetValue(AgentToolTrailers.Outcome) switch
+        {
+            AgentToolTrailers.Refused => rpc.Trailers.GetValue(AgentToolTrailers.Reason) switch
+            {
+                AgentToolTrailers.Refusals.NotFound => new AgentToolNotFoundException($"No tool is offered as '{name}'.", exception),
+                AgentToolTrailers.Refusals.Unauthenticated => new AgentToolUnauthenticatedException(detail, exception),
+                AgentToolTrailers.Refusals.AccessDenied => new AgentToolAccessDeniedException(detail, exception),
+                AgentToolTrailers.Refusals.InvalidArguments => new AgentToolArgumentException(detail, exception),
+                AgentToolTrailers.Refusals.NotInvocable => new AgentToolNotInvocableException(detail, exception),
+                _ => null
+            },
+            AgentToolTrailers.Failed => new AgentToolFailedException(
+                Kind(rpc.Trailers.GetValue(AgentToolTrailers.Reason)),
+                detail,
+                exception,
+                bool.TryParse(rpc.Trailers.GetValue(AgentToolTrailers.Retryable), out var retryable) ? retryable : null),
+            _ => rpc.StatusCode switch
+            {
+                StatusCode.Unauthenticated => new AgentToolUnauthenticatedException(detail, exception),
+                StatusCode.PermissionDenied => new AgentToolAccessDeniedException(detail, exception),
+                StatusCode.InvalidArgument => new AgentToolArgumentException(detail, exception),
+                StatusCode.Unimplemented => new AgentToolNotInvocableException(detail, exception),
+                _ => null
+            }
         };
     }
 
     /// <summary>
-    /// Finds the transport failure in a chain of exceptions.
+    /// Maps a failure reason to its kind.
     /// </summary>
-    /// <param name="exception">The outermost.</param>
-    /// <returns>The transport failure, or null where there is none.</returns>
+    /// <param name="reason">The reason from the trailers.</param>
+    /// <returns>The kind; a fault if unrecognized.</returns>
+    private static AgentToolFailureKind Kind(string? reason) => reason switch
+    {
+        AgentToolTrailers.Failures.NotFound => AgentToolFailureKind.NotFound,
+        AgentToolTrailers.Failures.Invalid => AgentToolFailureKind.Invalid,
+        AgentToolTrailers.Failures.Conflict => AgentToolFailureKind.Conflict,
+        AgentToolTrailers.Failures.Denied => AgentToolFailureKind.Denied,
+        AgentToolTrailers.Failures.Unauthenticated => AgentToolFailureKind.Unauthenticated,
+        AgentToolTrailers.Failures.RateLimited => AgentToolFailureKind.RateLimited,
+        AgentToolTrailers.Failures.Unavailable => AgentToolFailureKind.Unavailable,
+        AgentToolTrailers.Failures.Timeout => AgentToolFailureKind.Timeout,
+        _ => AgentToolFailureKind.Fault
+    };
+
+    /// <summary>
+    /// Finds the <see cref="RpcException"/> in an exception chain.
+    /// </summary>
+    /// <param name="exception">The outermost exception.</param>
+    /// <returns>The transport failure, or null.</returns>
     private static RpcException? Rpc(Exception? exception)
     {
         for (; exception is not null; exception = exception.InnerException)

@@ -1,7 +1,6 @@
 using ApricotFramework.Agentic.Tools.Exceptions;
 using ApricotFramework.Agentic.Tools.Registry;
 using ApricotFramework.Agentic.Tools.Sources;
-using ApricotFramework.Agentic.Tools.Tests;
 
 namespace ApricotFramework.Agentic.Tools.Tests.Registry;
 
@@ -187,6 +186,14 @@ public class AgentToolRegistryTests
 
             return ValueTask.FromResult(this.tools);
         }
+
+        /// <inheritdoc />
+        public ValueTask<AgentToolDescriptor?> FindAsync(string name, IAgentToolSourceContext context, CancellationToken cancellationToken = default)
+        {
+            this.Calls++;
+
+            return ValueTask.FromResult(this.tools.FirstOrDefault(tool => tool.Name == name));
+        }
     }
 
     /// <summary>Something for a function to return.</summary>
@@ -204,6 +211,10 @@ public class AgentToolRegistryTests
 
             return ValueTask.FromResult(tools);
         }
+
+        /// <inheritdoc />
+        public async ValueTask<AgentToolDescriptor?> FindAsync(string name, IAgentToolSourceContext context, CancellationToken cancellationToken = default) =>
+            (await this.GetToolsAsync(context, cancellationToken)).FirstOrDefault(tool => tool.Name == name);
     }
 
     /// <summary>A host check that counts how often it is asked.</summary>

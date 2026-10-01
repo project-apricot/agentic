@@ -62,6 +62,30 @@ asking.
 checked once in the life of the process, not once per listing — and only a declaration that
 *passed* is remembered, so one that threw says so again next time.
 
+**A call asks for one name.** `IAgentToolSource.FindAsync` is what a call uses where a listing uses
+`GetToolsAsync`: the registry asks each source in turn and stops at the first that answers. It has
+no default, on purpose — reading the whole listing is always possible and rarely the best a source
+can do, and a default that did it quietly would hide the cost from whoever forgot to do better. A
+fixed list answers from a name-keyed index built once (the static and registration sources do); a
+source reaching a service skips names outside its prefix without asking anyone, and looks inside
+its cached listing's index otherwise (the gRPC source does). Whatever it does, it must agree with
+the listing: a name it finds is one the listing offers that caller.
+
+## This host's own, or from elsewhere
+
+`IAgentToolSource.IsExternal` decides what the registry does with a tool it cannot accept. A tool
+this host wrote and got wrong — refused by a validator, or under a name already taken — fails the
+listing, as it failed startup: it is this host's to fix. A tool from somewhere this host does not
+control is logged and left out, and so is an external source that fails to answer, so one bad
+declaration or one service being down costs those tools and nothing else. This host's own sources
+are consulted first, so a name taken by both resolves to this host's tool whatever the order of
+registration.
+
+False by default. The gRPC source is external unless told `RequireService`; a curating source is
+whatever the source it wraps is. A wiring mistake — a client never registered — is thrown as
+`AgentToolConfigurationException`, and the registry lets that through even from an external source,
+because it is a bug here rather than an outage there.
+
 ## Validators
 
 What a declaration ought to carry beyond a name is the host's judgement, so none of these are

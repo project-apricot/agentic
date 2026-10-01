@@ -56,6 +56,7 @@ public sealed class FleetService : IAsyncDisposable
         builder.Services.AddAgentToolType<TTools>();
         builder.Services.AddAgentToolFilter<Hiding>();
         builder.Services.AddAgentToolAuthorizationFilter<Refusing>();
+        builder.Services.AddAgentToolExceptionTranslator<HostErrors>();
 
         var app = builder.Build();
 
@@ -84,6 +85,21 @@ public sealed class FleetService : IAsyncDisposable
     {
         /// <inheritdoc />
         public ValueTask<AgentToolAuthorizationDecision> AuthorizeAsync(AgentToolDescriptor tool, AgentToolContext context, CancellationToken cancellationToken = default) =>
-            ValueTask.FromResult(gate.Refuses(tool.Name) ? AgentToolAuthorizationDecision.Deny("Needs a supervisor.") : AgentToolAuthorizationDecision.Allow());
+            ValueTask.FromResult(
+                gate.WantsACaller(tool.Name) ? AgentToolAuthorizationDecision.Unauthenticated("Nobody is signed in.")
+                : gate.Refuses(tool.Name) ? AgentToolAuthorizationDecision.Deny("Needs a supervisor.")
+                : AgentToolAuthorizationDecision.Allow());
+    }
+
+    // the serving host's own vocabulary, described once. an InvalidOperationException is left alone,
+    // so a fault still arrives as the host would have it
+    private sealed class HostErrors : IAgentToolExceptionTranslator
+    {
+        public Exceptions.AgentToolException? Translate(Exception exception, AgentToolDescriptor tool) => exception switch
+        {
+            KeyNotFoundException => new Exceptions.AgentToolFailedException(AgentToolFailureKind.NotFound, exception.Message, exception),
+            TimeoutException => new Exceptions.AgentToolFailedException(AgentToolFailureKind.Timeout, exception.Message, exception),
+            _ => null
+        };
     }
 }

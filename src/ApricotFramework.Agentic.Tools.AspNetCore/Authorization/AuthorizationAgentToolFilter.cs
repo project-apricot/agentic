@@ -1,75 +1,62 @@
 using System.Security.Claims;
 using ApricotFramework.Agentic.Tools.Filters;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 
 namespace ApricotFramework.Agentic.Tools.AspNetCore.Authorization;
 
 /// <summary>
-/// Decides a tool from the authorization its registration carries.
+/// Authorizes a tool call against the authorization its registration carries.
 /// </summary>
 /// <remarks>
 /// <para>
-/// An <see cref="IAgentToolAuthorizationFilter"/>, not an <see cref="IAgentToolFilter"/>: it runs
-/// only after every filter has decided the caller can see the tool, and its refusal is reported as
-/// access denied rather than not-found.
+/// Runs after visibility filters; a refusal is access denied, not not-found. A tool declaring
+/// nothing is allowed and <see cref="AuthorizationOptions.FallbackPolicy"/> is not consulted.
+/// <see cref="IAllowAnonymous"/> waives everything else declared.
 /// </para>
 /// <para>
-/// The reason a tool can be gated the way an endpoint is. The attribute on the tool is the same
-/// attribute that would sit on a controller action, it resolves to the same requirements, and
-/// those requirements reach the same handlers over the same stores - so a tool and the endpoint
-/// beside it cannot drift into deciding the same caller differently.
+/// A call with no caller is evaluated as an unauthenticated <see cref="ClaimsPrincipal"/>, so the
+/// requirements decide. The tool is passed as the authorization resource. Where a tool names
+/// authentication schemes and there is a request, the identity those schemes produce is evaluated;
+/// nothing is challenged.
 /// </para>
 /// <para>
-/// A tool that declares nothing is allowed. That is what the MCP SDK does with a tool carrying no
-/// authorization metadata, and it is the only answer that lets a public tool sit beside gated ones.
-/// The host's <see cref="AuthorizationOptions.FallbackPolicy"/> is deliberately <em>not</em>
-/// consulted: it belongs to endpoints, the transport endpoint carrying these calls has already been
-/// through it, and applying it again per tool would gate a tool on a policy written for a route.
-/// A host wanting every tool gated says so on the tools - or adds an authorization filter of its
-/// own with <c>AddAgentToolAuthorizationFilter</c>.
-/// </para>
-/// <para>
-/// <see cref="IAllowAnonymous"/> waives whatever else the registration declares, so
-/// <c>[AllowAnonymous]</c> beside <c>[Authorize]</c> opens the tool. ASP.NET Core's own semantics,
-/// footgun included, and the MCP SDK's too.
-/// </para>
-/// <para>
-/// A call carrying no caller is handed an unauthenticated <see cref="ClaimsPrincipal"/> rather than
-/// refused outright, so the requirements decide. Anything reached through <c>[Authorize]</c> denies
-/// it - that attribute carries the deny-anonymous requirement whether it names a policy -
-/// while a host's own requirement is left free to permit a call made by no one, which is how a
-/// worker or a scheduler gets to run a tool.
-/// </para>
-/// <para>
-/// The tool is passed as the authorization resource, so a handler can narrow on it - refusing
-/// anything destructive to a given caller, say - without this class knowing that is happening.
+/// Scoped, because <see cref="IAuthorizationService"/> reaches scoped handlers.
 /// </para>
 /// </remarks>
 public sealed class AuthorizationAgentToolFilter : IAgentToolAuthorizationFilter
 {
     /// <summary>
-    /// The decision point.
+    /// The authorization service.
     /// </summary>
     private readonly IAuthorizationService authorizationService;
 
     /// <summary>
-    /// What the registration carries.
+    /// Resolves the tool's policy.
     /// </summary>
     private readonly AgentToolAuthorizationPolicy policy;
 
     /// <summary>
+    /// The request in progress, if any.
+    /// </summary>
+    private readonly IHttpContextAccessor? accessor;
+
+    /// <summary>
     /// Creates a new instance of the filter.
     /// </summary>
-    /// <param name="authorizationService">The decision point.</param>
-    /// <param name="policy">What the registration carries.</param>
-    /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
-    public AuthorizationAgentToolFilter(IAuthorizationService authorizationService, AgentToolAuthorizationPolicy policy)
+    /// <param name="authorizationService">The authorization service.</param>
+    /// <param name="policy">The policy resolver.</param>
+    /// <param name="accessor">The request accessor, or null.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="authorizationService"/> or <paramref name="policy"/> is null.</exception>
+    public AuthorizationAgentToolFilter(IAuthorizationService authorizationService, AgentToolAuthorizationPolicy policy, IHttpContextAccessor? accessor = null)
     {
         ArgumentNullException.ThrowIfNull(authorizationService);
         ArgumentNullException.ThrowIfNull(policy);
 
         this.authorizationService = authorizationService;
         this.policy = policy;
+        this.accessor = accessor;
     }
 
     /// <inheritdoc />
@@ -78,23 +65,87 @@ public sealed class AuthorizationAgentToolFilter : IAgentToolAuthorizationFilter
         ArgumentNullException.ThrowIfNull(tool);
         ArgumentNullException.ThrowIfNull(context);
 
-        // empty where the tool declares nothing, and where it declares [AllowAnonymous] over
+        // none where the tool declares nothing, and where it declares [AllowAnonymous] over
         // whatever else it declares
-        var requirements = await this.policy.ResolveAsync(tool).ConfigureAwait(false);
+        var resolvedPolicy = await this.policy.ResolvePolicyAsync(tool).ConfigureAwait(false);
 
-        if (requirements.Count == 0)
+        if (resolvedPolicy is null)
         {
             return AgentToolAuthorizationDecision.Allow();
         }
 
-        var user = context.User ?? new ClaimsPrincipal(new ClaimsIdentity());
+        var caller = await this.AuthenticateAsync(resolvedPolicy, context).ConfigureAwait(false);
+
+        var user = caller ?? new ClaimsPrincipal(new ClaimsIdentity());
 
         // the descriptor as the resource, so a handler can narrow on what the tool declares -
         // that it is destructive, that it carries a label - and on what the host said about it
-        var result = await this.authorizationService.AuthorizeAsync(user, tool, requirements).ConfigureAwait(false);
+        var result = await this.authorizationService.AuthorizeAsync(user, tool, resolvedPolicy.Requirements).ConfigureAwait(false);
 
-        return result.Succeeded
-            ? AgentToolAuthorizationDecision.Allow()
-            : AgentToolAuthorizationDecision.Deny($"The caller does not satisfy what the tool '{tool.Name}' requires.");
+        if (result.Succeeded)
+        {
+            return AgentToolAuthorizationDecision.Allow();
+        }
+
+        var reason = Describe(tool, result.Failure);
+
+        return caller is null
+            ? AgentToolAuthorizationDecision.Unauthenticated(reason)
+            : AgentToolAuthorizationDecision.Deny(reason);
+    }
+
+    /// <summary>
+    /// Determines the identity to authorize.
+    /// </summary>
+    /// <param name="resolvedPolicy">The tool's policy.</param>
+    /// <param name="context">The call.</param>
+    /// <returns>The caller, or null if nobody is authenticated.</returns>
+    /// <remarks>
+    /// Merges the identities of the policy's schemes when there is a request; a failing scheme
+    /// contributes nothing. Otherwise, the context's caller.
+    /// </remarks>
+    private async ValueTask<ClaimsPrincipal?> AuthenticateAsync(AuthorizationPolicy resolvedPolicy, AgentToolContext context)
+    {
+        if (resolvedPolicy.AuthenticationSchemes.Count == 0 || this.accessor?.HttpContext is not { } http)
+        {
+            return context.User;
+        }
+
+        ClaimsPrincipal? merged = null;
+
+        foreach (var scheme in resolvedPolicy.AuthenticationSchemes)
+        {
+            var result = await http.AuthenticateAsync(scheme).ConfigureAwait(false);
+
+            if (result is { Succeeded: true, Principal: { } principal })
+            {
+                merged ??= new ClaimsPrincipal();
+                merged.AddIdentities(principal.Identities);
+            }
+        }
+
+        return merged;
+    }
+
+    /// <summary>
+    /// Builds the denial reason.
+    /// </summary>
+    /// <param name="tool">The tool.</param>
+    /// <param name="failure">The authorization failure, if any.</param>
+    /// <returns>The reason.</returns>
+    /// <remarks>
+    /// Includes handler failure reasons so the caller knows which access to ask for.
+    /// </remarks>
+    private static string Describe(AgentToolDescriptor tool, AuthorizationFailure? failure)
+    {
+        var reasons = failure?.FailureReasons
+            .Select(reason => reason.Message)
+            .Where(message => !string.IsNullOrWhiteSpace(message))
+            .Distinct(StringComparer.Ordinal)
+            .ToList() ?? [];
+
+        var refusal = $"The caller does not satisfy what the tool '{tool.Name}' requires.";
+
+        return reasons.Count == 0 ? refusal : $"{refusal} {string.Join(" ", reasons)}";
     }
 }

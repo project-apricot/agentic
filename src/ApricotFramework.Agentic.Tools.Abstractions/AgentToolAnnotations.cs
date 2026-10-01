@@ -3,18 +3,12 @@ using Microsoft.Extensions.AI;
 namespace ApricotFramework.Agentic.Tools;
 
 /// <summary>
-/// A declaration, said in the way the AI abstractions already say it.
+/// Maps a declaration to and from MCP annotation names in <see cref="AITool.AdditionalProperties"/>.
 /// </summary>
-/// <remarks>
-/// <see cref="AITool.AdditionalProperties"/> is where the ecosystem keeps a tool's annotations,
-/// and these are the names the Model Context Protocol gives them. Projecting a declaration into
-/// it means a consumer that has never heard of this library - <c>McpServerTool.Create</c>, a chat
-/// client rendering a confirmation prompt - reads the same behavior a filter here reads.
-/// </remarks>
 public static class AgentToolAnnotations
 {
     /// <summary>
-    /// The name a person sees.
+    /// The human-readable name.
     /// </summary>
     public const string Title = "title";
 
@@ -24,12 +18,12 @@ public static class AgentToolAnnotations
     public const string ReadOnlyHint = "readOnlyHint";
 
     /// <summary>
-    /// Whether the tool can destroy something.
+    /// Whether the tool may be destructive.
     /// </summary>
     public const string DestructiveHint = "destructiveHint";
 
     /// <summary>
-    /// Whether calling twice is the same as calling once.
+    /// Whether repeated calls have no further effect.
     /// </summary>
     public const string IdempotentHint = "idempotentHint";
 
@@ -39,15 +33,14 @@ public static class AgentToolAnnotations
     public const string OpenWorldHint = "openWorldHint";
 
     /// <summary>
-    /// Projects a declaration into the properties an AI tool carries.
+    /// Projects a declaration into AI tool properties.
     /// </summary>
-    /// <param name="declaration">What was declared.</param>
-    /// <param name="labels">Whether to include the host's labels under their own names.</param>
+    /// <param name="declaration">The declaration.</param>
+    /// <param name="labels">Whether to include the host's labels.</param>
     /// <returns>The properties.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="declaration"/> is null.</exception>
     /// <remarks>
-    /// Labels are included by default, under the names the host chose. A host whose label names
-    /// could collide with an annotation name has said something ambiguous, and the annotation wins.
+    /// Annotations win over labels with the same name.
     /// </remarks>
     public static IReadOnlyDictionary<string, object?> For(IAgentToolDeclaration declaration, bool labels = true)
     {
@@ -73,17 +66,14 @@ public static class AgentToolAnnotations
     }
 
     /// <summary>
-    /// Reads whatever a function already says about itself in these terms.
+    /// Reads the annotations a function already carries.
     /// </summary>
     /// <param name="function">The function to read.</param>
-    /// <returns>What it said, with anything unsaid left to the caller to decide.</returns>
+    /// <returns>The annotations, null where not stated.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="function"/> is null.</exception>
     /// <remarks>
-    /// <para>
-    /// Deliberately returns nullables rather than a declaration. A missing hint is different from
-    /// a declared <c>false</c>, and the difference is the one that matters: a tool that did not
-    /// say whether it destroys anything should be assumed to, and only the caller can decide that.
-    /// </para>
+    /// A missing hint differs from <c>false</c>: a tool silent on destructiveness should be assumed
+    /// destructive, which is the caller's decision.
     /// </remarks>
     public static (string? Title, bool? IsReadOnly, bool? IsDestructive, bool? IsIdempotent, bool? IsOpenWorld) Read(AITool function)
     {

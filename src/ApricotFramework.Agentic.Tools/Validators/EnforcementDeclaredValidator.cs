@@ -3,26 +3,14 @@ using ApricotFramework.Agentic.Tools.Exceptions;
 namespace ApricotFramework.Agentic.Tools.Validators;
 
 /// <summary>
-/// The tripwire: a tool carrying a gate that nothing in this host enforces refuses to compose.
+/// Rejects a gated tool when nothing in the host enforces gates.
 /// </summary>
-/// <remarks>
-/// <para>
-/// This is why there is no setting to turn authorization on. Forgetting the call that enforces it
-/// would otherwise open every tool that thought it was gated, and the failure is silent: a tool
-/// with <c>[Authorize]</c> on it looks gated in the source and is not.
-/// </para>
-/// <para>
-/// The check is by namespace rather than by type, because this package deliberately does not
-/// reference ASP.NET Core - a console host federating MCP servers should not acquire a web
-/// framework to say so. The namespace is public and stable, and a host enforcing authorization
-/// its own way says so by registering an <see cref="AgentToolEnforcementMarker"/>.
-/// </para>
-/// </remarks>
-/// <param name="marker">Registered by whatever enforces gates, or null where nothing does.</param>
+/// <remarks>Prevents a forgotten enforcement call from silently opening <c>[Authorize]</c> tools. Gates are detected by namespace so this package need not reference ASP.NET Core; hosts enforcing their own way register an <see cref="AgentToolEnforcementMarker"/>.</remarks>
+/// <param name="marker">Present when something enforces gates; otherwise null.</param>
 public sealed class EnforcementDeclaredValidator(AgentToolEnforcementMarker? marker = null) : IAgentToolValidator
 {
     /// <summary>
-    /// The namespace whose interfaces mean "a caller has to satisfy something".
+    /// Namespace of the authorization gate interfaces.
     /// </summary>
     private const string GateNamespace = "Microsoft.AspNetCore.Authorization";
 
@@ -57,29 +45,26 @@ public sealed class EnforcementDeclaredValidator(AgentToolEnforcementMarker? mar
     }
 
     /// <summary>
-    /// Whether a piece of metadata says a caller has to satisfy something.
+    /// Whether metadata is a gate.
     /// </summary>
-    /// <param name="metadata">What was said.</param>
-    /// <returns>True where it is a gate.</returns>
+    /// <param name="metadata">The metadata.</param>
+    /// <returns>True if it is a gate.</returns>
     private static bool Gates(object metadata) =>
         Implements(metadata, "IAuthorizeData") || Implements(metadata, "IAuthorizationRequirementData");
 
     /// <summary>
-    /// Whether a piece of metadata waives every gate on the tool.
+    /// Whether metadata waives every gate on the tool.
     /// </summary>
-    /// <param name="metadata">What was said.</param>
-    /// <returns>True where it is an anonymous marker.</returns>
-    /// <remarks>
-    /// A gate the host waived on purpose is not one nothing is enforcing.
-    /// </remarks>
+    /// <param name="metadata">The metadata.</param>
+    /// <returns>True if it is an anonymous marker.</returns>
     private static bool Waives(object metadata) => Implements(metadata, "IAllowAnonymous");
 
     /// <summary>
-    /// Whether something implements one of the interfaces this looks for.
+    /// Whether metadata implements a gate-namespace interface by name.
     /// </summary>
-    /// <param name="metadata">What was said.</param>
-    /// <param name="name">The interface's name.</param>
-    /// <returns>True where it does.</returns>
+    /// <param name="metadata">The metadata.</param>
+    /// <param name="name">The interface name.</param>
+    /// <returns>True if it does.</returns>
     private static bool Implements(object metadata, string name) =>
         metadata.GetType().GetInterfaces().Any(contract =>
             string.Equals(contract.Namespace, GateNamespace, StringComparison.Ordinal) &&

@@ -33,8 +33,20 @@ decision would have to pick one answer for two different situations.
 
 Both are applied the same way — to the listing and to the call — so a caller is never offered
 something that then refuses them. Register either with
-`AddAgentToolFilter<T>()` / `AddAgentToolAuthorizationFilter<T>()`, singleton by default, scoped
-when the decision reads per-call state.
+`AddAgentToolFilter<T>()` / `AddAgentToolAuthorizationFilter<T>()`. Both are **scoped by default**:
+the invoker is resolved from each call's scope, and a decision almost always reaches something
+per-request — ASP.NET Core's authorization handlers commonly are. Pass a longer lifetime only for a
+filter that depends on nothing scoped.
+
+### Refused, or nobody calling
+
+An authorization filter refuses in one of two ways. `AgentToolAuthorizationDecision.Deny(reason)`
+means the caller lacks something, and arrives as `AgentToolAccessDeniedException`.
+`AgentToolAuthorizationDecision.Unauthenticated(reason)` means nobody is calling, and arrives as
+`AgentToolUnauthenticatedException` — a subclass of the first, so a host handling denials keeps
+handling it. The two are fixed differently, by asking for a grant or by signing in, and the
+surfaces tell whoever reads the result which it was. Only the filter decides: a refusal of a call
+made by no one may be about what the tool does rather than who is missing.
 
 ## The attribute implementation
 
@@ -73,8 +85,23 @@ winning:
 | `AuthorizationPolicy` | an object in the metadata, from `RequireAuthorization` or a source | taken as it is |
 
 A permission attribute, a scope attribute, a policy attribute or one nobody has written yet all
-work, and none of them reach this library. `AuthenticationSchemes` is ignored: acting on it means
-challenging a caller to authenticate again, and an invocation has no request to challenge.
+work, and none of them reach this library.
+
+`AuthenticationSchemes` is honoured the way the authorization middleware honours it for an
+endpoint: where a tool names schemes and the call arrived over a request, the identity evaluated is
+the one those schemes produce, not whichever the default scheme did. Nothing is ever challenged — a
+tool call has no response of its own to challenge on — and without a request, the context's caller
+is used.
+
+A refusal says what the handlers said. Where a handler fails with an `AuthorizationFailureReason`,
+its message is part of the denial, so a caller learns which grant is missing — which discloses
+nothing, since the tool was offered to them.
+
+The filter and the policy resolver are registered **scoped**. `IAuthorizationService` reaches the
+host's authorization handlers, and a handler resolving a caller's grants per request is scoped; a
+filter held for the life of the process would capture the first caller's services for everyone
+after, and scope validation refuses to build such a host. What a tool resolves to is still cached
+for the life of the process, keyed on the descriptor.
 
 Attributes are read from the holding class first and the method after, and from a type **and
 everything it derives from**, so a family of tools declares a shared requirement once and one

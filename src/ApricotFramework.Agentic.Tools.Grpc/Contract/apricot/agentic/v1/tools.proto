@@ -9,6 +9,21 @@ option csharp_namespace = "ApricotFramework.Agentic.Tools.Grpc.Contract";
 // Deliberately domain neutral. Every service with an agent lane implements this same contract,
 // so a consumer that federates several of them - an MCP server, an agent loop - needs one client
 // rather than one per domain.
+//
+// A failed call carries trailers saying who failed, because a status code cannot: NOT_FOUND is
+// "no tool by that name" when the serving framework refused the call, and "no record by that
+// identifier" when the tool ran and failed.
+//
+//   apricot-agentic-outcome    "refused" - the framework refused the call before the tool ran
+//                              "failed"  - the tool ran and its operation failed
+//   apricot-agentic-reason     refused: not_found | access_denied | unauthenticated |
+//                                       invalid_arguments | not_invocable
+//                              failed:  fault | not_found | invalid | conflict | denied |
+//                                       unauthenticated | rate_limited | unavailable | timeout
+//   apricot-agentic-retryable  failed only: "true" where trying again unchanged may succeed
+//
+// A status without them was not described by the serving framework; a consumer should read it by
+// its code only where the code is unambiguous, and never read an untrailed NOT_FOUND as a refusal.
 service AgentTools {
 
   // What this caller is offered. Filtered by whatever the serving host gates its tools on, so a

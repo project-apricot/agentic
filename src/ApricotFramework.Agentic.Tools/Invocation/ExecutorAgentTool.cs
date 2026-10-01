@@ -5,37 +5,26 @@ using System.Text.Json;
 namespace ApricotFramework.Agentic.Tools.Invocation;
 
 /// <summary>
-/// A listed tool, as a function that goes back through the executor when called.
+/// A listed tool exposed as a function that calls back through the executor.
 /// </summary>
-/// <remarks>
-/// <para>
-/// What <see cref="IAgentToolExecutor.GetAvailableFunctionsAsync"/> hands a chat client. A
-/// listing and a call are separated by however long a conversation takes, so the function cannot
-/// hold the scope it was listed in - it carries the declaration and re-enters the executor,
-/// which opens a fresh scope and rebuilds the context for each call.
-/// </para>
-/// <para>
-/// That also means the filters run again at call time, which is the behavior worth having: a
-/// tool listed twenty minutes ago and revoked since is refused rather than run.
-/// </para>
-/// </remarks>
+/// <remarks>Holds no scope: each call re-enters <see cref="IAgentToolExecutor"/> with a fresh scope and context, so filters run again and a since-revoked tool is refused.</remarks>
 internal sealed class ExecutorAgentTool : AgentTool
 {
     /// <summary>
-    /// What was listed.
+    /// The listed tool.
     /// </summary>
     private readonly AgentToolDescriptor descriptor;
 
     /// <summary>
-    /// Where the call goes.
+    /// Where calls go.
     /// </summary>
     private readonly IAgentToolExecutor executor;
 
     /// <summary>
-    /// Creates a new instance of the tool.
+    /// Creates the tool.
     /// </summary>
-    /// <param name="descriptor">What was listed.</param>
-    /// <param name="executor">Where the call goes.</param>
+    /// <param name="descriptor">The listed tool.</param>
+    /// <param name="executor">Where calls go.</param>
     internal ExecutorAgentTool(AgentToolDescriptor descriptor, IAgentToolExecutor executor)
     {
         ArgumentNullException.ThrowIfNull(descriptor);
@@ -79,10 +68,7 @@ internal sealed class ExecutorAgentTool : AgentTool
     public override JsonElement? ReturnJsonSchema => this.descriptor.Tool.ReturnJsonSchema;
 
     /// <inheritdoc />
-    /// <remarks>
-    /// Forwarded so that a consumer reaching for what is really behind this - the underlying
-    /// <c>McpClientTool</c>, say - finds it rather than finding a proxy.
-    /// </remarks>
+    /// <remarks>Forwards to the underlying tool so consumers can reach e.g. the <c>McpClientTool</c>.</remarks>
     public override object? GetService(Type serviceType, object? serviceKey = null) => base.GetService(serviceType, serviceKey) ?? this.descriptor.Tool.GetService(serviceType, serviceKey);
 
     /// <inheritdoc />
@@ -103,14 +89,11 @@ internal sealed class ExecutorAgentTool : AgentTool
     }
 
     /// <summary>
-    /// Writes the arguments as the JSON the executor takes.
+    /// Serializes the arguments to JSON for the executor.
     /// </summary>
-    /// <param name="arguments">The arguments as the caller built them.</param>
+    /// <param name="arguments">The caller's arguments.</param>
     /// <returns>The arguments as JSON.</returns>
-    /// <remarks>
-    /// A caller that already had JSON gets its own text back untouched, which is what keeps a
-    /// large identifier intact through a round trip nobody asked for.
-    /// </remarks>
+    /// <remarks>Arguments that are already JSON are returned untouched, preserving large identifiers.</remarks>
     private string Write(AIFunctionArguments arguments)
     {
         ArgumentNullException.ThrowIfNull(arguments);
@@ -121,7 +104,7 @@ internal sealed class ExecutorAgentTool : AgentTool
     }
 
     /// <summary>
-    /// Reads a result back as a value a chat client can carry.
+    /// Parses a JSON result into a value a chat client can carry.
     /// </summary>
     /// <param name="json">The result as JSON.</param>
     /// <returns>The result.</returns>

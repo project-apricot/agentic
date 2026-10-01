@@ -79,13 +79,31 @@ gRPC is its own business, and a library that decided would be one more thing to 
 
 ### Errors
 
-| Thrown | Status |
+A status code cannot say who failed. `NOT_FOUND` is "no tool by that name" when the framework
+refused the call and "no record by that identifier" when the tool ran — and a caller acting on the
+wrong reading tells a model the tool is gone when only its argument was wrong. So every failure the
+framework describes carries trailers saying which (`AgentToolTrailers` in the contract package):
+
+| Trailer | Values |
 | --- | --- |
-| `AgentToolNotFoundException` | `NotFound` |
-| `AgentToolAccessDeniedException` | `PermissionDenied` |
-| `AgentToolArgumentException` | `InvalidArgument` |
-| `AgentToolNotInvocableException` | `Unimplemented` |
-| anything else | `Internal` |
+| `apricot-agentic-outcome` | `refused` — the framework refused before the tool ran; `failed` — the tool ran and failed |
+| `apricot-agentic-reason` | refused: `not_found`, `access_denied`, `unauthenticated`, `invalid_arguments`, `not_invocable`; failed: `fault`, `not_found`, `invalid`, `conflict`, `denied`, `unauthenticated`, `rate_limited`, `unavailable`, `timeout` |
+| `apricot-agentic-retryable` | failed only: `true` where trying again unchanged may succeed |
+
+| Thrown | Status | Outcome |
+| --- | --- | --- |
+| `AgentToolNotFoundException` | `NotFound` | refused |
+| `AgentToolUnauthenticatedException` | `Unauthenticated` | refused |
+| `AgentToolAccessDeniedException` | `PermissionDenied` | refused |
+| `AgentToolArgumentException` | `InvalidArgument` | refused |
+| `AgentToolNotInvocableException` | `Unimplemented` | refused |
+| `AgentToolFailedException` | by kind: `NotFound`, `InvalidArgument`, `FailedPrecondition`, `PermissionDenied`, `Unauthenticated`, `ResourceExhausted`, `Unavailable`, `DeadlineExceeded`, `Internal` | failed |
+| any other `AgentToolException` | `Internal` | failed |
+
+Anything else a tool throws is the host's own, and leaves the service as the host's pipeline has
+it. Describe it once with an `IAgentToolExceptionTranslator` — see
+[Hosting](/docs/agentic/hosting#a-hosts-own-exceptions) — and it crosses as a failure of the right
+kind instead.
 
 A failure part way through a stream fails the call rather than closing it quietly, so a caller
 cannot mistake a truncated sequence for a complete one.
@@ -123,8 +141,24 @@ builder.Services.AddGrpcClient<AgentTools.AgentToolsClient>("tickets", client =>
 builder.Services.AddGrpcAgentTools("tickets", options => options.Prefix = "tickets_");
 ```
 
-One call per service federated, each with its own source and its own options, so one service
-being down costs its tools rather than all of them.
+One call per service federated, each with its own source and its own options.
+
+**One service being down costs its tools, and nothing else.** A remote source is external, so the
+registry logs a service that fails to answer and leaves its tools out; a remote tool whose schema
+cannot be read, or that one of this host's validators refuses, or whose name is already taken here
+is logged and left out the same way. `RequireService = true` holds a service to the rules for this
+host's own tools instead, for a host that would rather not run than run without it. A client this
+host never registered is not an outage but a wiring bug, and fails loudly with
+`AgentToolConfigurationException` either way.
+
+**A call reaches one service.** Invoking a tool asks each source in turn for that one name and
+stops at the first that has it; a source whose `Prefix` the name does not carry answers without
+asking its service at all. A call to billing does not list tickets, and does not fail because
+tickets is down.
+
+**Deadlines.** A client registration's deadline — a container-wide default, say — applies to
+agent tool calls too, and a tool can run for far longer than a listing takes. `CallDeadline` sets
+one for invoking this service's tools only.
 
 **No client is held.** The factory caches the channel, so a client is cheap to make — but it is
 made in a scope, and anything configured per client, such as an interceptor or call credentials,
@@ -140,22 +174,28 @@ this process and nothing downstream can tell the difference: it goes into `ChatO
 can be offered over MCP, it can be re-served over gRPC.
 
 `IsOpenWorld` is forced true whatever the serving host said — a tool reached over a wire is
-outside this application by construction. The status codes come back as the same exceptions the
-serving side threw, so a refusal stays a refusal across the hop rather than arriving as a fault a
-model will retry.
+outside this application by construction. A failed call is read from the trailers and comes back
+as the same exception the serving side raised — a refusal stays a refusal across the hop, and a
+failure of the operation arrives as `AgentToolFailedException` of the kind the serving host
+reported, retryable or not. A status without trailers — an endpoint's own authentication, a
+proxy — is read by its code where the code alone is unambiguous (`UNAUTHENTICATED`,
+`PERMISSION_DENIED`, `INVALID_ARGUMENT`, `UNIMPLEMENTED`); an untrailed `NOT_FOUND` could be a tool
+or a record, so it, and anything else, is left as it is rather than guessed at.
 
 That holds when the host translates transport failures on its clients — `AddGrpcErrorMapping()`
 on the builder, or container-wide where it reaches this client without its registration saying
 so. The status is read from the whole exception chain, so a translation that keeps the original
 as its inner exception reads the same, and the host's own error becomes the refusal's inner
-exception. A fault is left exactly as the host's client threw it.
+exception. A status the serving framework did not describe is left exactly as the host's client
+threw it.
 
 ### Caching
 
-`Lifetime` is zero by default, meaning the service is asked on every listing. That is deliberate:
-the serving host filters its listing by who is asking, so one caller's answer is not another's. A
-host whose remote surface is the same for everybody can set it; one that is not should leave it
-alone.
+`Lifetime` is zero by default, meaning the service is asked on every listing. Set, a listing is
+held **per caller**: the serving host filters its listing by who is asking, so one caller's answer
+is never another's. The default key is the caller's `sub` or name-identifier claim, or the
+identity's name; `CacheKey` replaces it, returning null to leave a call out of the cache, or a
+constant for a host whose remote surface is the same for everybody.
 
 ### Point to point
 

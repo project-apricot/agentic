@@ -5,47 +5,38 @@ using System.Text.Json;
 namespace ApricotFramework.Agentic.Tools;
 
 /// <summary>
-/// How an invocation travels with the arguments it belongs to.
+/// Carries the invocation context and JSON payload inside <see cref="AIFunctionArguments"/>.
 /// </summary>
 /// <remarks>
-/// <para>
-/// <see cref="AIFunctionArguments.Context"/> is where the AI abstractions already keep whatever a
-/// caller wants a function to have, and <see cref="AIFunctionArguments.Services"/> is where they
-/// keep the scope. Using both rather than adding a parameter is what keeps a tool an ordinary
-/// <see cref="AIFunction"/>, callable by anything in the ecosystem.
-/// </para>
-/// <para>
-/// The JSON payload rides along beside the named arguments on purpose. A model's arguments arrive
-/// as a dictionary, which is what a foreign function reads; a surface of ours has JSON text, in
-/// which an <c>Int64</c> past 2^53 survives. Carrying both means neither kind of tool pays for
-/// the other's shape.
-/// </para>
+/// Uses <see cref="AIFunctionArguments.Context"/> and <see cref="AIFunctionArguments.Services"/> so
+/// tools stay ordinary <see cref="AIFunction"/>s. The JSON payload travels beside the named
+/// arguments so an <c>Int64</c> beyond 2^53 survives.
 /// </remarks>
 public static class AgentToolInvocation
 {
     /// <summary>
-    /// Where the JSON payload is kept.
+    /// Key under which the JSON payload is stored.
     /// </summary>
     private static readonly object PayloadKey = typeof(AgentToolInvocation);
 
     /// <summary>
-    /// Builds the arguments for a call, from JSON.
+    /// Builds call arguments from JSON.
     /// </summary>
-    /// <param name="argumentsJson">The arguments as JSON, or null or empty where there are none.</param>
-    /// <param name="context">Who is asking, and the scope this call runs in.</param>
+    /// <param name="argumentsJson">The arguments as JSON, or null or empty for none.</param>
+    /// <param name="context">The invocation context.</param>
     /// <returns>The arguments.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="context"/> is null.</exception>
-    /// <exception cref="AgentToolArgumentException">Thrown when the arguments are not JSON or are not an object.</exception>
+    /// <exception cref="AgentToolArgumentException">Thrown when the arguments are not a JSON object.</exception>
     public static AIFunctionArguments Create(string? argumentsJson, AgentToolContext context)
     {
         return Create(Parse(argumentsJson), context);
     }
 
     /// <summary>
-    /// Builds the arguments for a call.
+    /// Builds call arguments from a JSON object.
     /// </summary>
     /// <param name="payload">The arguments as a JSON object.</param>
-    /// <param name="context">Who is asking, and the scope this call runs in.</param>
+    /// <param name="context">The invocation context.</param>
     /// <returns>The arguments.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="context"/> is null.</exception>
     /// <exception cref="AgentToolArgumentException">Thrown when <paramref name="payload"/> is not an object.</exception>
@@ -77,10 +68,10 @@ public static class AgentToolInvocation
     }
 
     /// <summary>
-    /// Reads the arguments as JSON, where they were given that way.
+    /// Gets the JSON payload, if the arguments were built from one.
     /// </summary>
     /// <param name="arguments">The arguments.</param>
-    /// <returns>The payload, or null where the caller built the arguments itself.</returns>
+    /// <returns>The payload, or null.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="arguments"/> is null.</exception>
     public static JsonElement? GetPayload(this AIFunctionArguments arguments)
     {
@@ -92,10 +83,10 @@ public static class AgentToolInvocation
     }
 
     /// <summary>
-    /// Reads the invocation, where there is one.
+    /// Gets the invocation context, if any.
     /// </summary>
     /// <param name="arguments">The arguments.</param>
-    /// <returns>The invocation, or null where the caller supplied none.</returns>
+    /// <returns>The context, or null.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="arguments"/> is null.</exception>
     public static AgentToolContext? GetAgentToolContext(this AIFunctionArguments arguments)
     {
@@ -107,16 +98,15 @@ public static class AgentToolInvocation
     }
 
     /// <summary>
-    /// Reads the invocation, insisting on one.
+    /// Gets the invocation context, throwing if absent.
     /// </summary>
     /// <param name="arguments">The arguments.</param>
-    /// <returns>The invocation.</returns>
+    /// <returns>The context.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="arguments"/> is null.</exception>
-    /// <exception cref="InvalidOperationException">Thrown when the caller supplied none.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when there is no context.</exception>
     /// <remarks>
-    /// Deliberately not an <see cref="AgentToolException"/>. Arriving without a context is a host
-    /// that went around the executor, not a call a model got wrong - and a refusal a model is
-    /// invited to retry is worse than a fault that stops.
+    /// Not an <see cref="AgentToolException"/>: a missing context means the host bypassed the executor,
+    /// which should fault rather than invite a model to retry.
     /// </remarks>
     public static AgentToolContext RequireAgentToolContext(this AIFunctionArguments arguments)
     {
@@ -127,16 +117,11 @@ public static class AgentToolInvocation
     }
 
     /// <summary>
-    /// Reads a JSON payload, treating nothing as an empty object.
+    /// Parses a JSON payload, treating empty input as an empty object.
     /// </summary>
     /// <param name="argumentsJson">The arguments as JSON.</param>
     /// <returns>The payload.</returns>
-    /// <exception cref="AgentToolArgumentException">Thrown when the arguments are not JSON.</exception>
-    /// <remarks>
-    /// An absent payload is read as an empty object rather than rejected. A model calling a tool
-    /// that takes nothing may well send nothing, and refusing that would be a failure it cannot
-    /// act on.
-    /// </remarks>
+    /// <exception cref="AgentToolArgumentException">Thrown when the arguments are not valid JSON.</exception>
     public static JsonElement Parse(string? argumentsJson)
     {
         try

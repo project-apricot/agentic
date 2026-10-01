@@ -3,19 +3,16 @@ using ModelContextProtocol.Client;
 namespace ApricotFramework.Agentic.Tools.Mcp.Client;
 
 /// <summary>
-/// Says that what a server offers has changed.
+/// Invalidates cached tool listings when a server's tools change.
 /// </summary>
 /// <remarks>
-/// A listing is cached per connection, because asking a server what it offers on every call is
-/// a round trip per call. A server that adds or removes a tool says so with
-/// <c>notifications/tools/list_changed</c>, and whoever hears it calls this - which is the
-/// difference between a cache and a stale listing.
+/// Listings are cached per connection; call this on <c>notifications/tools/list_changed</c>.
 /// </remarks>
 public interface IMcpToolInvalidation
 {
     /// <summary>
-    /// Forgets what a server said it offers.
+    /// Forgets a server's cached listing.
     /// </summary>
-    /// <param name="client">The server, or null for all of them.</param>
+    /// <param name="client">The server, or null for all.</param>
     void Invalidate(McpClient? client = null);
 }
