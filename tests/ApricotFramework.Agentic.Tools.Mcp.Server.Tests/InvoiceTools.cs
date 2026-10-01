@@ -14,6 +14,10 @@ public sealed class InvoiceTools
     [Description("Reads an invoice that is not there.")]
     public static string Missing([Description("The invoice.")] long id) => throw new KeyNotFoundException($"No invoice {id}.");
 
+    [AgentTool("invoices_list", Title = "List invoices", ReadOnly = true)]
+    [Description("Lists invoices.")]
+    public static IReadOnlyList<long> List() => [1, 2];
+
     [AgentTool("invoices_broken", Title = "Read from a broken ledger", ReadOnly = true)]
     [Description("Fails with something nobody described.")]
     public static string Broken() => throw new InvalidOperationException("connection string Server=ledger;Password=hunter2 rejected");

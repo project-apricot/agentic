@@ -33,6 +33,7 @@ dotnet add package ApricotFramework.Agentic.Tools.Mcp.Client   # tools from upst
 dotnet add package ApricotFramework.Agentic.Tools.Mcp.Server   # this host's tools, over MCP
 dotnet add package ApricotFramework.Agentic.Tools.Grpc.Server  # this host's tools, over gRPC
 dotnet add package ApricotFramework.Agentic.Tools.Grpc.Client  # tools from another service, over gRPC
+dotnet add package ApricotFramework.Agentic.Tools.ErrorDefinitions  # ErrorDefinitions errors as tool failures
 ```
 
 ## A tool

@@ -304,6 +304,15 @@ depends on very few distinctions, and `IsRetryable` — decided by the kind unle
 otherwise — is the one a driver of an agent most needs. Translators are asked in registration
 order; the first answer wins, and what this library raised itself is never offered.
 
+A host on `ApricotFramework.ErrorDefinitions` needs no translator of its own:
+`ApricotFramework.Agentic.Tools.ErrorDefinitions` maps every `ErrorKinds` value to the closest
+failure kind, keeps each error's code in the message, and lists every error of a validation
+failure so a model can correct them all at once.
+
+```csharp
+builder.Services.AddAgentToolErrorDefinitions();
+```
+
 Map them at your surface — the [MCP](/docs/agentic/mcp#errors) and
 [gRPC](/docs/agentic/grpc#errors) packages already do. The distinction worth preserving is
 **refusal versus fault**: a refusal that reads as a fault invites a model to retry it, and an
