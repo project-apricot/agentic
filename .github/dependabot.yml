@@ -10,8 +10,23 @@ updates:
       - dependencies
     commit-message:
       prefix: "chore(deps)"
+    groups:
+      microsoft-extensions:
+        patterns:
+          - "Microsoft.Extensions.*"
+      mcp:
+        patterns:
+          - "ModelContextProtocol*"
+      grpc:
+        patterns:
+          - "Grpc.*"
+          - "Google.Protobuf"
+      apricot-framework:
+        patterns:
+          - "ApricotFramework.*"
     ignore:
       - dependency-name: "xunit*"
+      - dependency-name: "Microsoft.AspNetCore.TestHost"
       - dependency-name: "Microsoft.NET.Test.Sdk"
       - dependency-name: "coverlet.*"
       - dependency-name: "Microsoft.Testing.*"
