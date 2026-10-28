@@ -226,7 +226,7 @@ public sealed class McpAgentToolSource : IAgentToolSource, IMcpToolInvalidation
     /// <param name="client">The server.</param>
     /// <returns>The name.</returns>
     private static string Origin(McpClient client) =>
-        client.ServerInfo.Name is { Length: > 0 } name ? name : "mcp";
+        client.ServerInfo?.Name is { Length: > 0 } name ? name : "mcp";
 
     /// <summary>
     /// Builds a foreign tool's local name.
