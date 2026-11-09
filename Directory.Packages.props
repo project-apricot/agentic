@@ -16,7 +16,7 @@
   <!-- Model Context Protocol -->
   <ItemGroup>
     <PackageVersion Include="ModelContextProtocol" Version="2.3.0" />
-    <PackageVersion Include="ModelContextProtocol.Core" Version="2.3.0" />
+    <PackageVersion Include="ModelContextProtocol.Core" Version="2.4.0" />
   </ItemGroup>
   <!-- gRPC / Protobuf -->
   <ItemGroup>
